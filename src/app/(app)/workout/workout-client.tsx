@@ -186,57 +186,55 @@ export function WorkoutClient({
         prescribed_reps: number;
       }> = [];
 
+      // Fetch all exercise histories in parallel
+      const uniqueExerciseIds = [...new Set(exList.map((te) => te.exercise_id))];
+      const historyMap = new Map<
+        string,
+        Array<{ weight: number; reps: number; difficulty: Difficulty }>
+      >();
+
+      if (demoMode) {
+        for (const eid of uniqueExerciseIds) {
+          const logs = getDemoSetLogsForExercise(eid);
+          historyMap.set(
+            eid,
+            logs
+              .filter((h) => h.actual_weight != null && h.actual_reps != null && h.difficulty != null)
+              .slice(-5)
+              .map((h) => ({ weight: h.actual_weight!, reps: h.actual_reps!, difficulty: h.difficulty as Difficulty }))
+          );
+        }
+      } else {
+        const historyResults = await Promise.all(
+          uniqueExerciseIds.map((eid) =>
+            supabase!
+              .from("set_logs")
+              .select("actual_weight, actual_reps, difficulty")
+              .eq("exercise_id", eid)
+              .eq("completed", true)
+              .not("difficulty", "is", null)
+              .not("actual_weight", "is", null)
+              .not("actual_reps", "is", null)
+              .order("created_at", { ascending: false })
+              .limit(5)
+          )
+        );
+        uniqueExerciseIds.forEach((eid, i) => {
+          historyMap.set(
+            eid,
+            (historyResults[i].data || [])
+              .filter((h) => h.actual_weight != null && h.actual_reps != null && h.difficulty != null)
+              .reverse()
+              .map((h) => ({ weight: h.actual_weight!, reps: h.actual_reps!, difficulty: h.difficulty as Difficulty }))
+          );
+        });
+      }
+
       for (const te of exList) {
         const ex = exerciseMap.get(te.exercise_id);
         if (!ex) continue;
 
-        let exerciseHistory: Array<{
-          weight: number;
-          reps: number;
-          difficulty: Difficulty;
-        }> = [];
-
-        if (demoMode) {
-          const logs = getDemoSetLogsForExercise(te.exercise_id);
-          exerciseHistory = logs
-            .filter(
-              (h) =>
-                h.actual_weight !== null &&
-                h.actual_reps !== null &&
-                h.difficulty !== null
-            )
-            .slice(-5)
-            .map((h) => ({
-              weight: h.actual_weight!,
-              reps: h.actual_reps!,
-              difficulty: h.difficulty as Difficulty,
-            }));
-        } else {
-          const { data: history } = await supabase!
-            .from("set_logs")
-            .select("actual_weight, actual_reps, difficulty")
-            .eq("exercise_id", te.exercise_id)
-            .eq("completed", true)
-            .not("difficulty", "is", null)
-            .not("actual_weight", "is", null)
-            .not("actual_reps", "is", null)
-            .order("created_at", { ascending: false })
-            .limit(5);
-
-          exerciseHistory = (history || [])
-            .filter(
-              (h) =>
-                h.actual_weight !== null &&
-                h.actual_reps !== null &&
-                h.difficulty !== null
-            )
-            .reverse()
-            .map((h) => ({
-              weight: h.actual_weight!,
-              reps: h.actual_reps!,
-              difficulty: h.difficulty as Difficulty,
-            }));
-        }
+        const exerciseHistory = historyMap.get(te.exercise_id) || [];
 
         const prescription = calculatePrescription(
           exerciseHistory,

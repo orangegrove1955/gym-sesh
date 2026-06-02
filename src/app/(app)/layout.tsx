@@ -22,13 +22,11 @@ export default async function AppLayout({
       redirect("/login");
     }
 
-    const { data: profile } = await supabase
-      .from("user_profiles")
-      .select("display_name")
-      .eq("id", user.id)
-      .single();
-
-    displayName = profile?.display_name || user.email || "Athlete";
+    // Use metadata display_name (set during signup) to avoid an extra DB query
+    displayName =
+      (user.user_metadata?.display_name as string) ||
+      user.email?.split("@")[0] ||
+      "Athlete";
   }
 
   return (

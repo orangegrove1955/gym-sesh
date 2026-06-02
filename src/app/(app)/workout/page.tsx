@@ -53,13 +53,26 @@ export default async function WorkoutPage() {
 
   if (!user) redirect("/login");
 
-  // Get active program
-  const { data: program } = await supabase
-    .from("programs")
-    .select("*")
-    .eq("user_id", user.id)
-    .eq("is_active", true)
-    .single();
+  // Get program + last session in parallel
+  const [programRes, lastSessionRes] = await Promise.all([
+    supabase
+      .from("programs")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("is_active", true)
+      .single(),
+    supabase
+      .from("workout_sessions")
+      .select("template_id")
+      .eq("user_id", user.id)
+      .not("completed_at", "is", null)
+      .order("completed_at", { ascending: false })
+      .limit(1)
+      .single(),
+  ]);
+
+  const program = programRes.data;
+  const lastSession = lastSessionRes.data;
 
   if (!program) {
     return (
@@ -72,7 +85,7 @@ export default async function WorkoutPage() {
     );
   }
 
-  // Get all templates for this program with their exercises
+  // Get templates + exercises in parallel
   const { data: templates } = await supabase
     .from("workout_templates")
     .select("*")
@@ -89,32 +102,21 @@ export default async function WorkoutPage() {
     );
   }
 
-  // Get all template exercises for all templates
   const templateIds = templates.map((t) => t.id);
-  const { data: templateExercises } = await supabase
-    .from("template_exercises")
-    .select("*")
-    .in("template_id", templateIds)
-    .order("sort_order", { ascending: true });
+  const [templateExercisesRes, exercisesRes] = await Promise.all([
+    supabase
+      .from("template_exercises")
+      .select("*")
+      .in("template_id", templateIds)
+      .order("sort_order", { ascending: true }),
+    supabase
+      .from("exercise_library")
+      .select("*")
+      .eq("user_id", user.id),
+  ]);
 
-  // Get exercise details
-  const exerciseIds = [
-    ...new Set((templateExercises || []).map((te) => te.exercise_id)),
-  ];
-  const { data: exercises } = await supabase
-    .from("exercise_library")
-    .select("*")
-    .in("id", exerciseIds.length > 0 ? exerciseIds : ["__none__"]);
-
-  // Determine next day based on last completed workout
-  const { data: lastSession } = await supabase
-    .from("workout_sessions")
-    .select("template_id")
-    .eq("user_id", user.id)
-    .not("completed_at", "is", null)
-    .order("completed_at", { ascending: false })
-    .limit(1)
-    .single();
+  const templateExercises = templateExercisesRes.data;
+  const exercises = exercisesRes.data;
 
   let nextDayNumber = 1;
   if (lastSession) {

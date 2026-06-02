@@ -77,42 +77,51 @@ export default async function HomePage() {
 
     if (!user) return null;
 
-    const { data: profile } = await supabase
-      .from("user_profiles")
-      .select("display_name")
-      .eq("id", user.id)
-      .single();
-
-    // Total workouts
-    const { count } = await supabase
-      .from("workout_sessions")
-      .select("*", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .not("completed_at", "is", null);
-    totalWorkouts = count ?? 0;
-
-    // This week's workouts
     const weekStart = new Date();
     weekStart.setDate(weekStart.getDate() - weekStart.getDay());
     weekStart.setHours(0, 0, 0, 0);
 
-    const { count: ww } = await supabase
-      .from("workout_sessions")
-      .select("*", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .not("completed_at", "is", null)
-      .gte("completed_at", weekStart.toISOString());
-    weekWorkouts = ww ?? 0;
+    // Run all queries in parallel
+    const [profileRes, totalRes, weekRes, streakRes, recentRes] =
+      await Promise.all([
+        supabase
+          .from("user_profiles")
+          .select("display_name")
+          .eq("id", user.id)
+          .single(),
+        supabase
+          .from("workout_sessions")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .not("completed_at", "is", null),
+        supabase
+          .from("workout_sessions")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .not("completed_at", "is", null)
+          .gte("completed_at", weekStart.toISOString()),
+        supabase
+          .from("workout_sessions")
+          .select("completed_at")
+          .eq("user_id", user.id)
+          .not("completed_at", "is", null)
+          .order("completed_at", { ascending: false })
+          .limit(30),
+        supabase
+          .from("workout_sessions")
+          .select(
+            "id, started_at, completed_at, template_id, workout_templates(name)"
+          )
+          .eq("user_id", user.id)
+          .not("completed_at", "is", null)
+          .order("completed_at", { ascending: false })
+          .limit(5),
+      ]);
 
-    // Current streak
-    const { data: recentSessions } = await supabase
-      .from("workout_sessions")
-      .select("completed_at")
-      .eq("user_id", user.id)
-      .not("completed_at", "is", null)
-      .order("completed_at", { ascending: false })
-      .limit(30);
+    totalWorkouts = totalRes.count ?? 0;
+    weekWorkouts = weekRes.count ?? 0;
 
+    const recentSessions = streakRes.data;
     if (recentSessions && recentSessions.length > 0) {
       const workoutDays = new Set(
         recentSessions.map((s) =>
@@ -132,18 +141,7 @@ export default async function HomePage() {
       }
     }
 
-    // Recent workouts
-    const { data: rw } = await supabase
-      .from("workout_sessions")
-      .select(
-        "id, started_at, completed_at, template_id, workout_templates(name)"
-      )
-      .eq("user_id", user.id)
-      .not("completed_at", "is", null)
-      .order("completed_at", { ascending: false })
-      .limit(5);
-
-    recentWorkouts = (rw || []).map((session) => ({
+    recentWorkouts = (recentRes.data || []).map((session) => ({
       id: session.id,
       completed_at: session.completed_at!,
       templateName:
@@ -152,7 +150,7 @@ export default async function HomePage() {
     }));
 
     displayName =
-      profile?.display_name || user.email?.split("@")[0] || "Athlete";
+      profileRes.data?.display_name || user.email?.split("@")[0] || "Athlete";
   }
 
   return (
