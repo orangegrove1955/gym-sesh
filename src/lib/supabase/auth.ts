@@ -4,8 +4,7 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "./server";
 
-// React cache() deduplicates this call within a single server request.
-// So layout + page + API routes in the same request share one auth call.
+// Full auth validation — hits Supabase auth server (use in layout/middleware)
 export const getCurrentUser = cache(async () => {
   const supabase = await createClient();
   const {
@@ -14,7 +13,16 @@ export const getCurrentUser = cache(async () => {
   return user;
 });
 
-// Also cache the supabase client creation per-request
+// Fast auth — decodes JWT locally, no network call (use in API routes)
+export const getSessionUser = cache(async () => {
+  const supabase = await createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  return session?.user ?? null;
+});
+
+// Cache the supabase client creation per-request
 export const getServerClient = cache(async () => {
   return await createClient();
 });

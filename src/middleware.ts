@@ -8,6 +8,12 @@ export async function middleware(request: NextRequest) {
   ) {
     return NextResponse.next();
   }
+
+  // Skip auth refresh for API routes — they handle their own auth
+  if (request.nextUrl.pathname.startsWith("/api/")) {
+    return NextResponse.next();
+  }
+
   return await updateSession(request);
 }
 

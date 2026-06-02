@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser, getServerClient } from "@/lib/supabase/auth";
+import { getSessionUser, getServerClient } from "@/lib/supabase/auth";
 import { format, subDays, startOfWeek, differenceInCalendarWeeks } from "date-fns";
 import type { WorkoutSession, SetLog, Exercise } from "@/types/database";
 
@@ -185,7 +185,7 @@ function computeStats(
 }
 
 export async function GET() {
-  const [user, supabase] = await Promise.all([getCurrentUser(), getServerClient()]);
+  const [user, supabase] = await Promise.all([getSessionUser(), getServerClient()]);
 
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
