@@ -369,10 +369,10 @@ export function ProgramEditor({
       {/* Day tabs */}
       <Tabs value={activeDay} onValueChange={setActiveDay}>
         <div className="flex items-center gap-2">
-          <TabsList className="flex-1 overflow-x-auto">
-            {templates.map((t) => (
-              <TabsTrigger key={t.id} value={t.id} className="min-w-[80px]">
-                {t.name}
+          <TabsList className="flex-1 overflow-x-auto scrollbar-hide">
+            {templates.map((t, i) => (
+              <TabsTrigger key={t.id} value={t.id} className="shrink-0">
+                Day {t.day_number}
               </TabsTrigger>
             ))}
           </TabsList>
@@ -384,6 +384,7 @@ export function ProgramEditor({
 
         {templates.map((template) => (
           <TabsContent key={template.id} value={template.id} className="mt-4">
+            <h3 className="text-sm font-medium text-foreground-muted mb-3">{template.name}</h3>
             <div className="space-y-2">
               {activeExercises.length === 0 && (
                 <Card>
