@@ -27,15 +27,15 @@ export async function POST() {
       return NextResponse.json({ message: "Program already exists, skipping seed" });
     }
 
-    // Upsert shared exercises (user_id = null)
+    // Insert exercises owned by this user
     const exercisesToInsert = DEFAULT_EXERCISES.map((e) => ({
       ...e,
-      user_id: null as string | null,
+      user_id: user.id,
     }));
 
     const { error: exerciseError } = await supabase
       .from("exercise_library")
-      .upsert(exercisesToInsert, { onConflict: "name", ignoreDuplicates: true });
+      .upsert(exercisesToInsert, { onConflict: "name,user_id", ignoreDuplicates: true });
 
     if (exerciseError) {
       return NextResponse.json({ error: "Failed to seed exercises", details: exerciseError }, { status: 500 });
@@ -44,7 +44,8 @@ export async function POST() {
     // Fetch all exercises to get their IDs
     const { data: exercises, error: fetchError } = await supabase
       .from("exercise_library")
-      .select("id, name");
+      .select("id, name")
+      .eq("user_id", user.id);
 
     if (fetchError || !exercises) {
       return NextResponse.json({ error: "Failed to fetch exercises", details: fetchError }, { status: 500 });
