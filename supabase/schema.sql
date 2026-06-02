@@ -95,6 +95,24 @@ create index idx_workout_sessions_user_started on public.workout_sessions (user_
 create index idx_template_exercises_template_sort on public.template_exercises (template_id, sort_order);
 
 -- ============================================================================
+-- TRIGGERS
+-- ============================================================================
+
+-- Auto-create user profile on signup
+create or replace function public.handle_new_user()
+returns trigger as $$
+begin
+  insert into public.user_profiles (id, display_name)
+  values (new.id, new.raw_user_meta_data->>'display_name');
+  return new;
+end;
+$$ language plpgsql security definer;
+
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();
+
+-- ============================================================================
 -- ROW LEVEL SECURITY
 -- ============================================================================
 
