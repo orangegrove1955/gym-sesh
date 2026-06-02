@@ -1,87 +1,44 @@
-import { createClient } from "@/lib/supabase/server";
-import { redirect } from "next/navigation";
+"use client";
+
+import { useState, useEffect } from "react";
 import { ProgramEditor } from "./program-editor";
-import type { WorkoutTemplate, TemplateExercise } from "@/types/database";
-import {
-  isDemoMode,
-  demoProgram,
-  demoTemplates,
-  demoTemplateExercises,
-  demoExercises,
-} from "@/lib/demo-data";
+import ProgramLoading from "./loading";
+import type {
+  Program,
+  WorkoutTemplate,
+  TemplateExercise,
+  Exercise,
+} from "@/types/database";
 
-export default async function ProgramPage() {
-  if (isDemoMode()) {
-    return (
-      <div className="container mx-auto px-4 py-6 max-w-4xl">
-        <h1 className="text-2xl font-bold mb-6">Program</h1>
-        <ProgramEditor
-          program={demoProgram}
-          templates={demoTemplates}
-          templateExercises={demoTemplateExercises}
-          exercises={demoExercises}
-          userId="demo-user"
-          demoMode
-        />
-      </div>
-    );
-  }
+interface ProgramData {
+  program: Program | null;
+  templates: WorkoutTemplate[];
+  templateExercises: TemplateExercise[];
+  exercises: Exercise[];
+  userId: string;
+}
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+export default function ProgramPage() {
+  const [data, setData] = useState<ProgramData | null>(null);
 
-  // Fetch active program
-  const { data: program } = await supabase
-    .from("programs")
-    .select("*")
-    .eq("user_id", user.id)
-    .eq("is_active", true)
-    .single();
+  useEffect(() => {
+    fetch("/api/program")
+      .then((r) => r.json())
+      .then(setData)
+      .catch(console.error);
+  }, []);
 
-  let templates: WorkoutTemplate[] = [];
-  let templateExercises: TemplateExercise[] = [];
-
-  if (program) {
-    const { data: t } = await supabase
-      .from("workout_templates")
-      .select("*")
-      .eq("program_id", program.id)
-      .order("day_number", { ascending: true });
-    templates = t ?? [];
-
-    if (t && t.length > 0) {
-      const { data: te } = await supabase
-        .from("template_exercises")
-        .select("*")
-        .in(
-          "template_id",
-          t.map((tmpl) => tmpl.id)
-        )
-        .order("sort_order", { ascending: true });
-      templateExercises = te ?? [];
-    }
-  }
-
-  // Fetch all exercises
-  const { data: exercises } = await supabase
-    .from("exercise_library")
-    .select("*")
-    .or(`user_id.is.null,user_id.eq.${user.id}`)
-    .order("muscle_group", { ascending: true })
-    .order("name", { ascending: true });
+  if (!data) return <ProgramLoading />;
 
   return (
     <div className="container mx-auto px-4 py-6 max-w-4xl">
       <h1 className="text-2xl font-bold mb-6">Program</h1>
       <ProgramEditor
-        program={program}
-        templates={templates ?? []}
-        templateExercises={templateExercises ?? []}
-        exercises={exercises ?? []}
-        userId={user.id}
+        program={data.program}
+        templates={data.templates}
+        templateExercises={data.templateExercises}
+        exercises={data.exercises}
+        userId={data.userId}
       />
     </div>
   );

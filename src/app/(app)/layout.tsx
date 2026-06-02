@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/lib/supabase/auth";
 import { BottomNav } from "./bottom-nav";
 import { isDemoMode, demoProfile } from "@/lib/demo-data";
 
@@ -13,16 +13,12 @@ export default async function AppLayout({
   if (isDemoMode()) {
     displayName = demoProfile.display_name || "Matt";
   } else {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getCurrentUser();
 
     if (!user) {
       redirect("/login");
     }
 
-    // Use metadata display_name (set during signup) to avoid an extra DB query
     displayName =
       (user.user_metadata?.display_name as string) ||
       user.email?.split("@")[0] ||
