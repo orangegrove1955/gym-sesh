@@ -192,6 +192,69 @@ export type Database = {
         };
         Relationships: [];
       };
+      push_subscriptions: {
+        Row: {
+          id: string;
+          user_id: string;
+          endpoint: string;
+          p256dh: string;
+          auth_key: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          endpoint: string;
+          p256dh: string;
+          auth_key: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          endpoint?: string;
+          p256dh?: string;
+          auth_key?: string;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      notification_preferences: {
+        Row: {
+          id: string;
+          user_id: string;
+          enabled: boolean;
+          schedule_type: string;
+          fixed_days: number[] | null;
+          days_interval: number | null;
+          reminder_hour: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          enabled?: boolean;
+          schedule_type?: string;
+          fixed_days?: number[] | null;
+          days_interval?: number | null;
+          reminder_hour?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          enabled?: boolean;
+          schedule_type?: string;
+          fixed_days?: number[] | null;
+          days_interval?: number | null;
+          reminder_hour?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       set_logs: {
         Row: {
           id: string;
@@ -284,3 +347,5 @@ export type TemplateExercise = Database["public"]["Tables"]["template_exercises"
 export type WorkoutSession = Database["public"]["Tables"]["workout_sessions"]["Row"];
 export type SetLog = Database["public"]["Tables"]["set_logs"]["Row"];
 export type UserProfile = Database["public"]["Tables"]["user_profiles"]["Row"];
+export type PushSubscription = Database["public"]["Tables"]["push_subscriptions"]["Row"];
+export type NotificationPreference = Database["public"]["Tables"]["notification_preferences"]["Row"];

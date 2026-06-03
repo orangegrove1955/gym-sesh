@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Dumbbell, Play, BarChart3, Settings } from "lucide-react";
+import { Dumbbell, Play, BarChart3, Settings, Bell } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -10,6 +10,7 @@ const navItems = [
   { href: "/workout", label: "Workout", icon: Play },
   { href: "/stats", label: "Stats", icon: BarChart3 },
   { href: "/program", label: "Program", icon: Settings },
+  { href: "/settings", label: "Settings", icon: Bell },
 ];
 
 export function BottomNav() {
