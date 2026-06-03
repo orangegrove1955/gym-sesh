@@ -23,7 +23,8 @@ create table public.exercise_library (
   equipment text not null check (equipment in ('barbell','dumbbell','cable','machine','bodyweight')),
   is_compound boolean not null default false,
   weight_increment numeric not null default 2.5,
-  created_at timestamptz default now() not null
+  created_at timestamptz default now() not null,
+  unique(name, user_id)
 );
 
 create table public.programs (

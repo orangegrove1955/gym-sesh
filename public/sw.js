@@ -3,8 +3,8 @@ self.addEventListener('push', function(event) {
   const title = data.title || 'GymSesh';
   const options = {
     body: data.body || 'Time to work out!',
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
+    icon: '/icon-192.svg',
+    badge: '/icon-192.svg',
     data: { url: data.url || '/' },
     vibrate: [200, 100, 200],
   };
