@@ -114,9 +114,11 @@ export default function SettingsPage() {
 
       if (pushSupported) {
         try {
-          const reg = await navigator.serviceWorker.ready;
-          const sub = await reg.pushManager.getSubscription();
-          setSubscribed(!!sub);
+          const reg = await navigator.serviceWorker.getRegistration("/sw.js");
+          if (reg) {
+            const sub = await reg.pushManager.getSubscription();
+            setSubscribed(!!sub);
+          }
         } catch {
           // Service worker not registered yet
         }
