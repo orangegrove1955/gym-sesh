@@ -112,6 +112,8 @@ export function WorkoutClient({
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [loading, setLoading] = useState(false);
   const [restored, setRestored] = useState(false);
+  const [restTimer, setRestTimer] = useState<number | null>(null); // seconds remaining
+  const [restTimerActive, setRestTimerActive] = useState(false);
 
   const exerciseMap = useMemo(() => {
     const m = new Map<string, Exercise>();
@@ -175,6 +177,25 @@ export function WorkoutClient({
     const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
   }, [phase, startedAt]);
+
+  // Rest timer countdown
+  useEffect(() => {
+    if (!restTimerActive || restTimer === null || restTimer <= 0) return;
+    const interval = setInterval(() => {
+      setRestTimer((prev) => {
+        if (prev === null || prev <= 1) {
+          setRestTimerActive(false);
+          // Vibrate when timer ends
+          if (typeof navigator !== "undefined" && navigator.vibrate) {
+            navigator.vibrate([200, 100, 200]);
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [restTimerActive, restTimer]);
 
   // Template exercises for selected template
   const currentTemplateExercises = useMemo(() => {
@@ -445,8 +466,19 @@ export function WorkoutClient({
             : set,
         ),
       );
+
+      // Start rest timer if there are more uncompleted sets in this exercise
+      if (currentGroup) {
+        const uncompletedAfter = currentGroup.sets.filter(
+          (cs) => cs.id !== setId && !cs.completed,
+        );
+        if (uncompletedAfter.length > 0 && currentGroup.templateExercise.rest_seconds > 0) {
+          setRestTimer(currentGroup.templateExercise.rest_seconds);
+          setRestTimerActive(true);
+        }
+      }
     },
-    [sets, supabase, demoMode],
+    [sets, supabase, demoMode, currentGroup],
   );
 
   const setDifficulty = useCallback(
@@ -924,6 +956,33 @@ export function WorkoutClient({
                 </Card>
               ))}
             </div>
+
+            {/* Rest timer */}
+            {restTimerActive && restTimer !== null && restTimer > 0 && (
+              <Card className="border-accent/30">
+                <CardContent className="p-4 text-center space-y-2">
+                  <p className="text-xs text-foreground-muted uppercase tracking-wide">Rest</p>
+                  <p className="text-4xl font-bold font-mono tabular-nums text-accent">
+                    {Math.floor(restTimer / 60)}:{(restTimer % 60).toString().padStart(2, "0")}
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => { setRestTimer(null); setRestTimerActive(false); }}
+                    className="text-foreground-muted"
+                  >
+                    Skip rest
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Rest done indicator */}
+            {restTimer === 0 && !restTimerActive && (
+              <div className="text-center text-sm text-success font-medium py-1">
+                Rest complete — go!
+              </div>
+            )}
 
             {/* Difficulty rating */}
             {currentExerciseDone && !currentExerciseDifficultySet && (
