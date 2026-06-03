@@ -47,7 +47,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background via-background-secondary to-background p-4">
+    <div className="flex min-h-screen items-center justify-center bg-linear-to-br from-background via-background-secondary to-background p-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-bold tracking-tight text-foreground">
@@ -61,9 +61,7 @@ export default function RegisterPage() {
         <Card>
           <CardHeader>
             <CardTitle>Create account</CardTitle>
-            <CardDescription>
-              Enter your details to get started
-            </CardDescription>
+            <CardDescription>Enter your details to get started</CardDescription>
           </CardHeader>
           <form onSubmit={handleSubmit}>
             <CardContent className="space-y-4">
