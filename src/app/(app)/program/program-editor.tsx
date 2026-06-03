@@ -162,6 +162,7 @@ export function ProgramEditor({
           is_backoff_set: false,
           rest_seconds: 120,
           notes: null,
+          superset_group: null,
           created_at: new Date().toISOString(),
         };
         setTemplateExercises((prev) => [...prev, data]);

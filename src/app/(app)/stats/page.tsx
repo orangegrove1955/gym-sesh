@@ -28,6 +28,7 @@ export default function StatsPage() {
         muscleDistData={data.muscleDistData as { name: string; value: number }[]}
         strengthData={
           data.strengthData as {
+            exerciseId: string;
             exerciseName: string;
             history: { date: string; weight: number }[];
             prs: { reps: number; weight: number }[];

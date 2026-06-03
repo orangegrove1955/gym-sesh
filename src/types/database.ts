@@ -132,6 +132,7 @@ export type Database = {
           is_backoff_set: boolean;
           rest_seconds: number;
           notes: string | null;
+          superset_group: number | null;
           created_at: string;
         };
         Insert: {
@@ -145,6 +146,7 @@ export type Database = {
           is_backoff_set?: boolean;
           rest_seconds?: number;
           notes?: string | null;
+          superset_group?: number | null;
           created_at?: string;
         };
         Update: {
@@ -158,6 +160,7 @@ export type Database = {
           is_backoff_set?: boolean;
           rest_seconds?: number;
           notes?: string | null;
+          superset_group?: number | null;
           created_at?: string;
         };
         Relationships: [];

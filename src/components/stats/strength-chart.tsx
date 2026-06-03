@@ -13,6 +13,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 interface ExerciseStrengthData {
+  exerciseId?: string;
   exerciseName: string;
   history: { date: string; weight: number }[];
   prs: { reps: number; weight: number }[];
@@ -20,9 +21,10 @@ interface ExerciseStrengthData {
 
 interface StrengthChartProps {
   exercises: ExerciseStrengthData[];
+  onExerciseClick?: (exerciseId: string, exerciseName: string) => void;
 }
 
-export function StrengthChart({ exercises }: StrengthChartProps) {
+export function StrengthChart({ exercises, onExerciseClick }: StrengthChartProps) {
   if (exercises.length === 0) {
     return (
       <div className="flex items-center justify-center h-[300px] text-foreground-muted text-sm">
@@ -37,7 +39,16 @@ export function StrengthChart({ exercises }: StrengthChartProps) {
         <Card key={ex.exerciseName}>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base">{ex.exerciseName}</CardTitle>
+              {onExerciseClick && ex.exerciseId ? (
+                <CardTitle
+                  className="text-base cursor-pointer hover:text-accent transition-colors underline decoration-dotted underline-offset-4 decoration-foreground-muted/40"
+                  onClick={() => onExerciseClick(ex.exerciseId!, ex.exerciseName)}
+                >
+                  {ex.exerciseName}
+                </CardTitle>
+              ) : (
+                <CardTitle className="text-base">{ex.exerciseName}</CardTitle>
+              )}
               <div className="flex gap-1.5 flex-wrap">
                 {ex.prs.map((pr) => (
                   <Badge key={pr.reps} variant="secondary" className="text-xs">

@@ -22,7 +22,9 @@ import {
   Trophy,
   Clock,
   Dumbbell,
+  Info,
 } from "lucide-react";
+import { ExerciseHistoryModal } from "@/components/exercise-history-modal";
 import type {
   WorkoutTemplate,
   TemplateExercise,
@@ -114,6 +116,8 @@ export function WorkoutClient({
   const [restored, setRestored] = useState(false);
   const [restTimer, setRestTimer] = useState<number | null>(null); // seconds remaining
   const [restTimerActive, setRestTimerActive] = useState(false);
+  const [historyExerciseId, setHistoryExerciseId] = useState<string | null>(null);
+  const [historyExerciseName, setHistoryExerciseName] = useState("");
 
   const exerciseMap = useMemo(() => {
     const m = new Map<string, Exercise>();
@@ -205,20 +209,66 @@ export function WorkoutClient({
       .sort((a, b) => a.sort_order - b.sort_order);
   }, [selectedTemplate, templateExercises]);
 
-  // Group sets by exercise
+  // Group sets by exercise, merging supersets into single groups
   const exerciseGroups = useMemo(() => {
     const groups: Array<{
       templateExercise: TemplateExercise;
       exercise: Exercise;
       sets: SetState[];
+      isSuperset: boolean;
+      supersetPartner?: { templateExercise: TemplateExercise; exercise: Exercise; sets: SetState[] };
     }> = [];
+    const processed = new Set<string>();
+
     for (const te of currentTemplateExercises) {
+      if (processed.has(te.id)) continue;
       const ex = exerciseMap.get(te.exercise_id);
       if (!ex) continue;
+
+      // Check if this exercise is part of a superset
+      if (te.superset_group != null) {
+        const partners = currentTemplateExercises.filter(
+          (t) => t.superset_group === te.superset_group && t.id !== te.id && !processed.has(t.id)
+        );
+        if (partners.length > 0) {
+          const partner = partners[0];
+          const partnerEx = exerciseMap.get(partner.exercise_id);
+          if (partnerEx) {
+            processed.add(te.id);
+            processed.add(partner.id);
+
+            // Interleave sets: A1, B1, A2, B2, ...
+            const aSets = sets.filter((s) => s.templateExerciseId === te.id);
+            const bSets = sets.filter((s) => s.templateExerciseId === partner.id);
+            const interleaved: SetState[] = [];
+            const maxLen = Math.max(aSets.length, bSets.length);
+            for (let i = 0; i < maxLen; i++) {
+              if (i < aSets.length) interleaved.push(aSets[i]);
+              if (i < bSets.length) interleaved.push(bSets[i]);
+            }
+
+            groups.push({
+              templateExercise: te,
+              exercise: ex,
+              sets: interleaved,
+              isSuperset: true,
+              supersetPartner: {
+                templateExercise: partner,
+                exercise: partnerEx,
+                sets: bSets,
+              },
+            });
+            continue;
+          }
+        }
+      }
+
+      processed.add(te.id);
       groups.push({
         templateExercise: te,
         exercise: ex,
         sets: sets.filter((s) => s.templateExerciseId === te.id),
+        isSuperset: false,
       });
     }
     return groups;
@@ -758,10 +808,37 @@ export function WorkoutClient({
             {/* Exercise header */}
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-xl font-bold">
-                  {currentGroup.exercise.name}
-                </h2>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="text-xl font-bold text-left underline decoration-dotted underline-offset-4 decoration-foreground-muted/40 flex items-center gap-1.5 cursor-pointer hover:text-accent transition-colors"
+                    onClick={() => {
+                      setHistoryExerciseId(currentGroup.exercise.id);
+                      setHistoryExerciseName(currentGroup.exercise.name);
+                    }}
+                  >
+                    {currentGroup.exercise.name}
+                    <Info className="h-4 w-4 text-foreground-muted shrink-0" />
+                  </button>
+                  {currentGroup.isSuperset && currentGroup.supersetPartner && (
+                    <>
+                      <span className="text-foreground-muted text-lg">+</span>
+                      <button
+                        className="text-xl font-bold text-left underline decoration-dotted underline-offset-4 decoration-foreground-muted/40 flex items-center gap-1.5 cursor-pointer hover:text-accent transition-colors"
+                        onClick={() => {
+                          setHistoryExerciseId(currentGroup.supersetPartner!.exercise.id);
+                          setHistoryExerciseName(currentGroup.supersetPartner!.exercise.name);
+                        }}
+                      >
+                        {currentGroup.supersetPartner.exercise.name}
+                        <Info className="h-4 w-4 text-foreground-muted shrink-0" />
+                      </button>
+                    </>
+                  )}
+                </div>
                 <div className="flex items-center gap-2 mt-1">
+                  {currentGroup.isSuperset && (
+                    <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30">Superset</Badge>
+                  )}
                   <Badge variant="secondary">
                     {currentGroup.exercise.muscle_group}
                   </Badge>
@@ -799,8 +876,12 @@ export function WorkoutClient({
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between mb-3">
                       <span className="text-sm font-medium">
-                        Set {s.setNumber} of{" "}
-                        {currentGroup.templateExercise.sets}
+                        {currentGroup.isSuperset && (
+                          <span className="text-accent mr-1.5">
+                            {exerciseMap.get(s.exerciseId)?.name?.split(" ")[0]}
+                          </span>
+                        )}
+                        Set {s.setNumber}
                       </span>
                       {s.completed && (
                         <Check className="h-5 w-5 text-success" />
@@ -1096,6 +1177,13 @@ export function WorkoutClient({
           </>
         )}
       </div>
+
+      <ExerciseHistoryModal
+        exerciseId={historyExerciseId ?? ""}
+        exerciseName={historyExerciseName}
+        open={!!historyExerciseId}
+        onClose={() => setHistoryExerciseId(null)}
+      />
     </div>
   );
 }

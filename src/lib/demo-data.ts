@@ -93,6 +93,7 @@ for (const day of programData.days) {
       is_backoff_set: ex.is_backoff_set,
       rest_seconds: ex.rest_seconds,
       notes: ex.notes ?? null,
+      superset_group: null,
       created_at: now.toISOString(),
     });
   }

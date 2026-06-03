@@ -108,9 +108,10 @@ function computeStats(
         .sort((a, b) => b.weight - a.weight)
         .slice(0, 3);
 
-      return { exerciseName: ex.name, history, prs };
+      return { exerciseId: ex.id, exerciseName: ex.name, history, prs };
     })
     .filter(Boolean) as {
+    exerciseId: string;
     exerciseName: string;
     history: { date: string; weight: number }[];
     prs: { reps: number; weight: number }[];

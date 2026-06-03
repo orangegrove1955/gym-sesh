@@ -1,11 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { WorkoutHeatmap } from "@/components/stats/workout-heatmap";
 import { MuscleDistribution } from "@/components/stats/muscle-distribution";
 import { StrengthChart } from "@/components/stats/strength-chart";
 import { VolumeChart } from "@/components/stats/volume-chart";
+import { ExerciseHistoryModal } from "@/components/exercise-history-modal";
 import { Flame, Trophy, Dumbbell, TrendingUp } from "lucide-react";
 
 interface StatsClientProps {
@@ -16,6 +18,7 @@ interface StatsClientProps {
   avgPerWeek: number;
   muscleDistData: { name: string; value: number }[];
   strengthData: {
+    exerciseId: string;
     exerciseName: string;
     history: { date: string; weight: number }[];
     prs: { reps: number; weight: number }[];
@@ -39,6 +42,9 @@ export function StatsClient({
   muscleGroups,
   sessionVolume,
 }: StatsClientProps) {
+  const [historyExerciseId, setHistoryExerciseId] = useState<string | null>(null);
+  const [historyExerciseName, setHistoryExerciseName] = useState("");
+
   return (
     <Tabs defaultValue="overview">
       <TabsList className="w-full">
@@ -120,7 +126,13 @@ export function StatsClient({
       </TabsContent>
 
       <TabsContent value="strength" className="mt-4">
-        <StrengthChart exercises={strengthData} />
+        <StrengthChart
+          exercises={strengthData}
+          onExerciseClick={(exerciseId, exerciseName) => {
+            setHistoryExerciseId(exerciseId);
+            setHistoryExerciseName(exerciseName);
+          }}
+        />
       </TabsContent>
 
       <TabsContent value="volume" className="mt-4">
@@ -131,6 +143,12 @@ export function StatsClient({
           sessionVolume={sessionVolume}
         />
       </TabsContent>
+      <ExerciseHistoryModal
+        exerciseId={historyExerciseId ?? ""}
+        exerciseName={historyExerciseName}
+        open={!!historyExerciseId}
+        onClose={() => setHistoryExerciseId(null)}
+      />
     </Tabs>
   );
 }
