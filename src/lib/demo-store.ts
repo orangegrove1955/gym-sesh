@@ -56,6 +56,9 @@ export function demoInsertSetLogs(
       difficulty: null,
       completed: false,
       completed_at: null,
+      is_banded: false,
+      went_to_failure: false,
+      equipment_used: null,
       created_at: new Date().toISOString(),
     };
     setLogs.push(log);

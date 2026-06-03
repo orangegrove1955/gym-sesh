@@ -39,10 +39,13 @@ interface SetState {
   setNumber: number;
   prescribedWeight: number;
   prescribedReps: number;
-  actualWeight: string; // string for clean input handling
+  actualWeight: string;
   actualReps: string;
   completed: boolean;
   difficulty: Difficulty | null;
+  isBanded: boolean;
+  wentToFailure: boolean;
+  equipmentUsed: string | null;
 }
 
 interface Props {
@@ -62,7 +65,8 @@ interface PersistedState {
   sessionId: string | null;
   sets: SetState[];
   currentExerciseIndex: number;
-  startedAt: string; // ISO string
+  skippedIndices: number[];
+  startedAt: string;
   selectedTemplateId: string | null;
 }
 
@@ -103,6 +107,7 @@ export function WorkoutClient({
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sets, setSets] = useState<SetState[]>([]);
   const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
+  const [skippedIndices, setSkippedIndices] = useState<Set<number>>(new Set());
   const [startedAt, setStartedAt] = useState<Date | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -122,6 +127,7 @@ export function WorkoutClient({
       setSessionId(saved.sessionId);
       setSets(saved.sets);
       setCurrentExerciseIndex(saved.currentExerciseIndex);
+      setSkippedIndices(new Set(saved.skippedIndices || []));
       setStartedAt(new Date(saved.startedAt));
       const t = templates.find((t) => t.id === saved.selectedTemplateId);
       if (t) setSelectedTemplate(t);
@@ -142,6 +148,7 @@ export function WorkoutClient({
         sessionId,
         sets,
         currentExerciseIndex,
+        skippedIndices: [...skippedIndices],
         startedAt: startedAt?.toISOString() || new Date().toISOString(),
         selectedTemplateId: selectedTemplate?.id || null,
       });
@@ -283,6 +290,7 @@ export function WorkoutClient({
                 weight: h.actual_weight!,
                 reps: h.actual_reps!,
                 difficulty: h.difficulty as Difficulty,
+                wentToFailure: h.went_to_failure,
               })),
           );
         }
@@ -291,7 +299,7 @@ export function WorkoutClient({
           uniqueExerciseIds.map((eid) =>
             supabase!
               .from("set_logs")
-              .select("actual_weight, actual_reps, difficulty")
+              .select("actual_weight, actual_reps, difficulty, went_to_failure")
               .eq("exercise_id", eid)
               .eq("completed", true)
               .not("difficulty", "is", null)
@@ -316,6 +324,7 @@ export function WorkoutClient({
                 weight: h.actual_weight!,
                 reps: h.actual_reps!,
                 difficulty: h.difficulty as Difficulty,
+                wentToFailure: h.went_to_failure,
               })),
           );
         });
@@ -346,6 +355,9 @@ export function WorkoutClient({
             actualReps: String(prescription.targetReps),
             completed: false,
             difficulty: null,
+            isBanded: false,
+            wentToFailure: false,
+            equipmentUsed: ex.equipment,
           });
           setLogInserts.push({
             session_id: sessionIdResult,
@@ -402,22 +414,22 @@ export function WorkoutClient({
       const weight = parseFloat(s.actualWeight) || 0;
       const reps = parseInt(s.actualReps) || 0;
 
+      const updateData = {
+        actual_weight: weight,
+        actual_reps: reps,
+        completed: true,
+        completed_at: new Date().toISOString(),
+        is_banded: s.isBanded,
+        went_to_failure: s.wentToFailure,
+        equipment_used: s.equipmentUsed,
+      };
+
       if (demoMode) {
-        demoUpdateSetLog(setId, {
-          actual_weight: weight,
-          actual_reps: reps,
-          completed: true,
-          completed_at: new Date().toISOString(),
-        });
+        demoUpdateSetLog(setId, updateData);
       } else {
         await supabase!
           .from("set_logs")
-          .update({
-            actual_weight: weight,
-            actual_reps: reps,
-            completed: true,
-            completed_at: new Date().toISOString(),
-          })
+          .update(updateData)
           .eq("id", setId);
       }
 
@@ -458,11 +470,38 @@ export function WorkoutClient({
     [currentGroup, supabase, demoMode],
   );
 
-  const nextExercise = useCallback(() => {
-    if (currentExerciseIndex < exerciseGroups.length - 1) {
-      setCurrentExerciseIndex((i) => i + 1);
+  const skipExercise = useCallback(() => {
+    setSkippedIndices((prev) => new Set([...prev, currentExerciseIndex]));
+    // Move to next non-skipped exercise
+    for (let i = currentExerciseIndex + 1; i < exerciseGroups.length; i++) {
+      if (!skippedIndices.has(i)) {
+        setCurrentExerciseIndex(i);
+        return;
+      }
     }
-  }, [currentExerciseIndex, exerciseGroups.length]);
+    // If all remaining are skipped, stay put (shouldn't normally happen)
+  }, [currentExerciseIndex, exerciseGroups.length, skippedIndices]);
+
+  const goToExercise = useCallback((index: number) => {
+    setSkippedIndices((prev) => {
+      const next = new Set(prev);
+      next.delete(index);
+      return next;
+    });
+    setCurrentExerciseIndex(index);
+  }, []);
+
+  const nextExercise = useCallback(() => {
+    // Find next non-skipped, non-completed exercise
+    for (let i = currentExerciseIndex + 1; i < exerciseGroups.length; i++) {
+      if (!skippedIndices.has(i)) {
+        setCurrentExerciseIndex(i);
+        return;
+      }
+    }
+    // Check if there are skipped exercises to come back to
+    // If not, we're at the end
+  }, [currentExerciseIndex, exerciseGroups.length, skippedIndices]);
 
   const finishWorkout = useCallback(async () => {
     if (!sessionId) return;
@@ -485,6 +524,21 @@ export function WorkoutClient({
   ) => {
     setSets((prev) =>
       prev.map((s) => (s.id === setId ? { ...s, [field]: value } : s)),
+    );
+  };
+
+  const toggleSetFlag = (
+    setId: string,
+    field: "isBanded" | "wentToFailure",
+  ) => {
+    setSets((prev) =>
+      prev.map((s) => (s.id === setId ? { ...s, [field]: !s[field] } : s)),
+    );
+  };
+
+  const setEquipment = (setId: string, equipment: string) => {
+    setSets((prev) =>
+      prev.map((s) => (s.id === setId ? { ...s, equipmentUsed: equipment } : s)),
     );
   };
 
@@ -630,6 +684,7 @@ export function WorkoutClient({
             setSets([]);
             setSessionId(null);
             setCurrentExerciseIndex(0);
+            setSkippedIndices(new Set());
             setStartedAt(null);
             clearState();
           }}
@@ -641,7 +696,12 @@ export function WorkoutClient({
   }
 
   // ---- ACTIVE PHASE ----
-  const isLastExercise = currentExerciseIndex === exerciseGroups.length - 1;
+  // Check if this is the last non-skipped exercise
+  const remainingIndices = exerciseGroups
+    .map((_, i) => i)
+    .filter((i) => i > currentExerciseIndex && !skippedIndices.has(i));
+  const isLastExercise = remainingIndices.length === 0;
+  const hasSkippedExercises = skippedIndices.size > 0;
 
   return (
     <div className="flex flex-col min-h-[calc(100dvh-8rem)]">
@@ -682,6 +742,16 @@ export function WorkoutClient({
                   </span>
                 </div>
               </div>
+              {!currentExerciseDone && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={skipExercise}
+                  className="text-foreground-muted"
+                >
+                  Skip
+                </Button>
+              )}
             </div>
 
             {/* Sets */}
@@ -772,26 +842,83 @@ export function WorkoutClient({
                         </Button>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-4 text-sm">
+                      <div className="flex items-center gap-3 text-sm flex-wrap">
                         <span>
-                          <span className="font-bold text-lg">
-                            {s.actualWeight}
-                          </span>{" "}
-                          kg
+                          <span className="font-bold text-lg">{s.actualWeight}</span> kg
                         </span>
                         <span>
-                          <span className="font-bold text-lg">
-                            {s.actualReps}
-                          </span>{" "}
-                          reps
+                          <span className="font-bold text-lg">{s.actualReps}</span> reps
                         </span>
+                        {s.isBanded && <Badge variant="secondary">Banded</Badge>}
+                        {s.wentToFailure && <Badge variant="destructive">Failure</Badge>}
+                        {s.equipmentUsed && s.equipmentUsed !== currentGroup.exercise.equipment && (
+                          <Badge variant="secondary">{s.equipmentUsed}</Badge>
+                        )}
                       </div>
                     )}
 
                     {!s.completed && (
-                      <p className="text-xs text-foreground-muted mt-2">
-                        Target: {s.prescribedWeight}kg x {s.prescribedReps} reps
-                      </p>
+                      <>
+                        <p className="text-xs text-foreground-muted mt-2">
+                          Target: {s.prescribedWeight}kg x {s.prescribedReps} reps
+                        </p>
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {/* Equipment variant — show for exercises that can use barbell or dumbbell */}
+                          {(currentGroup.exercise.equipment === "barbell" ||
+                            currentGroup.exercise.equipment === "dumbbell") && (
+                            <div className="flex rounded-lg overflow-hidden border border-border text-xs">
+                              <button
+                                type="button"
+                                className={cn(
+                                  "px-2.5 py-1 cursor-pointer transition-colors",
+                                  s.equipmentUsed === "barbell"
+                                    ? "bg-accent text-white"
+                                    : "text-foreground-muted hover:text-foreground"
+                                )}
+                                onClick={() => setEquipment(s.id, "barbell")}
+                              >
+                                Barbell
+                              </button>
+                              <button
+                                type="button"
+                                className={cn(
+                                  "px-2.5 py-1 cursor-pointer transition-colors",
+                                  s.equipmentUsed === "dumbbell"
+                                    ? "bg-accent text-white"
+                                    : "text-foreground-muted hover:text-foreground"
+                                )}
+                                onClick={() => setEquipment(s.id, "dumbbell")}
+                              >
+                                Dumbbell
+                              </button>
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => toggleSetFlag(s.id, "isBanded")}
+                            className={cn(
+                              "px-2.5 py-1 rounded-lg border text-xs cursor-pointer transition-colors",
+                              s.isBanded
+                                ? "border-accent bg-accent/20 text-accent"
+                                : "border-border text-foreground-muted hover:text-foreground"
+                            )}
+                          >
+                            Banded
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleSetFlag(s.id, "wentToFailure")}
+                            className={cn(
+                              "px-2.5 py-1 rounded-lg border text-xs cursor-pointer transition-colors",
+                              s.wentToFailure
+                                ? "border-destructive bg-destructive/20 text-destructive"
+                                : "border-border text-foreground-muted hover:text-foreground"
+                            )}
+                          >
+                            To Failure
+                          </button>
+                        </div>
+                      </>
                     )}
                   </CardContent>
                 </Card>
@@ -855,19 +982,32 @@ export function WorkoutClient({
               </div>
             )}
 
+            {/* Skipped exercises — come back to them */}
+            {hasSkippedExercises && (
+              <div className="pt-2 space-y-2">
+                <p className="text-xs text-foreground-muted font-medium">Skipped — tap to return:</p>
+                <div className="flex flex-wrap gap-2">
+                  {[...skippedIndices].map((idx) => {
+                    const g = exerciseGroups[idx];
+                    if (!g) return null;
+                    return (
+                      <button
+                        key={idx}
+                        onClick={() => goToExercise(idx)}
+                        className="px-3 py-1.5 rounded-lg border border-border text-xs text-foreground-muted hover:text-foreground hover:border-accent transition-colors cursor-pointer"
+                      >
+                        {g.exercise.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Next exercise / Finish button */}
             {currentExerciseDone && currentExerciseDifficultySet && (
-              <div className="pt-2">
-                {isLastExercise ? (
-                  <Button
-                    size="lg"
-                    className="w-full h-14 text-lg gap-2"
-                    onClick={finishWorkout}
-                  >
-                    <Trophy className="h-6 w-6" />
-                    Finish Workout
-                  </Button>
-                ) : (
+              <div className="pt-2 space-y-2">
+                {!isLastExercise && (
                   <Button
                     size="lg"
                     className="w-full h-14 text-lg gap-2"
@@ -876,6 +1016,21 @@ export function WorkoutClient({
                     Next Exercise
                     <ChevronRight className="h-6 w-6" />
                   </Button>
+                )}
+                {isLastExercise && !hasSkippedExercises && (
+                  <Button
+                    size="lg"
+                    className="w-full h-14 text-lg gap-2"
+                    onClick={finishWorkout}
+                  >
+                    <Trophy className="h-6 w-6" />
+                    Finish Workout
+                  </Button>
+                )}
+                {isLastExercise && hasSkippedExercises && (
+                  <p className="text-xs text-foreground-muted text-center">
+                    Complete skipped exercises above to finish workout
+                  </p>
                 )}
               </div>
             )}

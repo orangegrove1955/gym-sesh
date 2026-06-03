@@ -269,6 +269,9 @@ export type Database = {
           difficulty: string | null;
           completed: boolean;
           completed_at: string | null;
+          is_banded: boolean;
+          went_to_failure: boolean;
+          equipment_used: string | null;
           created_at: string;
         };
         Insert: {
@@ -284,6 +287,9 @@ export type Database = {
           difficulty?: string | null;
           completed?: boolean;
           completed_at?: string | null;
+          is_banded?: boolean;
+          went_to_failure?: boolean;
+          equipment_used?: string | null;
           created_at?: string;
         };
         Update: {
@@ -299,6 +305,9 @@ export type Database = {
           difficulty?: string | null;
           completed?: boolean;
           completed_at?: string | null;
+          is_banded?: boolean;
+          went_to_failure?: boolean;
+          equipment_used?: string | null;
           created_at?: string;
         };
         Relationships: [];

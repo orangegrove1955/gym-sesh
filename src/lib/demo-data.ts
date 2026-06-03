@@ -213,6 +213,9 @@ for (let i = 0; i < 15; i++) {
         difficulty: actualDiff,
         completed: true,
         completed_at: completedAt.toISOString(),
+        is_banded: false,
+        went_to_failure: false,
+        equipment_used: null,
         created_at: startDate.toISOString(),
       });
     }
