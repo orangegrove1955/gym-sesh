@@ -82,7 +82,13 @@ export default function SettingsPage() {
         await fetch("/api/push/preferences", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(newPrefs),
+          body: JSON.stringify({
+            enabled: newPrefs.enabled,
+            schedule_type: newPrefs.schedule_type === "days_since" ? "days_since_workout" : "fixed_days",
+            fixed_days: newPrefs.days,
+            days_interval: newPrefs.interval,
+            reminder_hour: newPrefs.reminder_hour_utc,
+          }),
         });
       } catch (e) {
         console.error("Failed to save preferences", e);
@@ -128,7 +134,13 @@ export default function SettingsPage() {
         const res = await fetch("/api/push/preferences");
         if (res.ok) {
           const data = await res.json();
-          setPrefs((prev) => ({ ...prev, ...data }));
+          setPrefs({
+            enabled: data.enabled ?? false,
+            schedule_type: data.schedule_type === "days_since_workout" ? "days_since" : "fixed_days",
+            days: data.fixed_days ?? [1, 3, 5],
+            interval: data.days_interval ?? 2,
+            reminder_hour_utc: data.reminder_hour ?? localToUtc(9),
+          });
         }
       } catch {
         // Use defaults
