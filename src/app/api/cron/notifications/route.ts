@@ -23,15 +23,13 @@ export async function GET(req: NextRequest) {
   }
 
   const now = new Date();
-  const currentHour = now.getUTCHours();
   const currentDay = now.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
 
-  // Get all users whose reminder hour matches
+  // Get all enabled notification preferences (cron runs once daily)
   const { data: prefs, error: prefsError } = await supabaseAdmin
     .from("notification_preferences")
     .select("*")
-    .eq("enabled", true)
-    .eq("reminder_hour", currentHour);
+    .eq("enabled", true);
 
   if (prefsError || !prefs) {
     return NextResponse.json({ error: prefsError?.message || "No prefs" }, { status: 500 });

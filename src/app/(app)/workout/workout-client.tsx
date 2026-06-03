@@ -13,7 +13,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import {
@@ -29,7 +28,6 @@ import type {
   TemplateExercise,
   Exercise,
   Difficulty,
-  SetLog,
 } from "@/types/database";
 
 type Phase = "select" | "active" | "complete";
@@ -41,8 +39,8 @@ interface SetState {
   setNumber: number;
   prescribedWeight: number;
   prescribedReps: number;
-  actualWeight: number;
-  actualReps: number;
+  actualWeight: string; // string for clean input handling
+  actualReps: string;
   completed: boolean;
   difficulty: Difficulty | null;
 }
@@ -54,6 +52,39 @@ interface Props {
   exercises: Exercise[];
   nextDayNumber: number;
   demoMode?: boolean;
+}
+
+// Session storage key for persisting active workout
+const STORAGE_KEY = "gymsesh_active_workout";
+
+interface PersistedState {
+  phase: Phase;
+  sessionId: string | null;
+  sets: SetState[];
+  currentExerciseIndex: number;
+  startedAt: string; // ISO string
+  selectedTemplateId: string | null;
+}
+
+function saveState(state: PersistedState) {
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {}
+}
+
+function loadState(): PersistedState | null {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearState() {
+  try {
+    sessionStorage.removeItem(STORAGE_KEY);
+  } catch {}
 }
 
 export function WorkoutClient({
@@ -72,8 +103,10 @@ export function WorkoutClient({
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sets, setSets] = useState<SetState[]>([]);
   const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
+  const [startedAt, setStartedAt] = useState<Date | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [restored, setRestored] = useState(false);
 
   const exerciseMap = useMemo(() => {
     const m = new Map<string, Exercise>();
@@ -81,17 +114,62 @@ export function WorkoutClient({
     return m;
   }, [exercises]);
 
-  // Timer
+  // Restore persisted state on mount
   useEffect(() => {
-    if (phase !== "active") return;
-    const interval = setInterval(
-      () => setElapsedSeconds((s) => s + 1),
-      1000
-    );
-    return () => clearInterval(interval);
-  }, [phase]);
+    const saved = loadState();
+    if (saved && saved.phase === "active" && saved.sessionId) {
+      setPhase(saved.phase);
+      setSessionId(saved.sessionId);
+      setSets(saved.sets);
+      setCurrentExerciseIndex(saved.currentExerciseIndex);
+      setStartedAt(new Date(saved.startedAt));
+      const t = templates.find((t) => t.id === saved.selectedTemplateId);
+      if (t) setSelectedTemplate(t);
+    } else {
+      // Default template selection
+      const t = templates.find((t) => t.day_number === nextDayNumber);
+      setSelectedTemplate(t || templates[0]);
+    }
+    setRestored(true);
+  }, [templates, nextDayNumber]);
 
-  // Get template exercises for selected template, sorted
+  // Persist state on changes
+  useEffect(() => {
+    if (!restored) return;
+    if (phase === "active" && sessionId) {
+      saveState({
+        phase,
+        sessionId,
+        sets,
+        currentExerciseIndex,
+        startedAt: startedAt?.toISOString() || new Date().toISOString(),
+        selectedTemplateId: selectedTemplate?.id || null,
+      });
+    } else if (phase === "complete" || phase === "select") {
+      clearState();
+    }
+  }, [
+    phase,
+    sessionId,
+    sets,
+    currentExerciseIndex,
+    startedAt,
+    selectedTemplate,
+    restored,
+  ]);
+
+  // Timer — calculate from startedAt, resilient to screen lock
+  useEffect(() => {
+    if (phase !== "active" || !startedAt) return;
+    const update = () => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt.getTime()) / 1000));
+    };
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [phase, startedAt]);
+
+  // Template exercises for selected template
   const currentTemplateExercises = useMemo(() => {
     if (!selectedTemplate) return [];
     return templateExercises
@@ -119,23 +197,17 @@ export function WorkoutClient({
   }, [currentTemplateExercises, sets, exerciseMap]);
 
   const currentGroup = exerciseGroups[currentExerciseIndex];
+  const nextGroup = exerciseGroups[currentExerciseIndex + 1] ?? null;
 
   const totalSets = sets.length;
   const completedSets = sets.filter((s) => s.completed).length;
   const progressPercent = totalSets > 0 ? (completedSets / totalSets) * 100 : 0;
 
-  // Check if current exercise is fully done (all sets completed + difficulty rated)
   const currentExerciseDone =
     currentGroup?.sets.every((s) => s.completed) ?? false;
   const currentExerciseDifficultySet =
     currentGroup?.sets[0]?.difficulty !== null &&
     currentGroup?.sets[0]?.difficulty !== undefined;
-
-  // Default to the next day template
-  useEffect(() => {
-    const t = templates.find((t) => t.day_number === nextDayNumber);
-    setSelectedTemplate(t || templates[0]);
-  }, [templates, nextDayNumber]);
 
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -151,7 +223,6 @@ export function WorkoutClient({
       let sessionIdResult: string;
 
       if (demoMode) {
-        // Demo mode: use in-memory store
         const session = demoCreateSession({
           user_id: userId,
           template_id: selectedTemplate.id,
@@ -187,7 +258,9 @@ export function WorkoutClient({
       }> = [];
 
       // Fetch all exercise histories in parallel
-      const uniqueExerciseIds = [...new Set(exList.map((te) => te.exercise_id))];
+      const uniqueExerciseIds = [
+        ...new Set(exList.map((te) => te.exercise_id)),
+      ];
       const historyMap = new Map<
         string,
         Array<{ weight: number; reps: number; difficulty: Difficulty }>
@@ -199,9 +272,18 @@ export function WorkoutClient({
           historyMap.set(
             eid,
             logs
-              .filter((h) => h.actual_weight != null && h.actual_reps != null && h.difficulty != null)
+              .filter(
+                (h) =>
+                  h.actual_weight != null &&
+                  h.actual_reps != null &&
+                  h.difficulty != null,
+              )
               .slice(-5)
-              .map((h) => ({ weight: h.actual_weight!, reps: h.actual_reps!, difficulty: h.difficulty as Difficulty }))
+              .map((h) => ({
+                weight: h.actual_weight!,
+                reps: h.actual_reps!,
+                difficulty: h.difficulty as Difficulty,
+              })),
           );
         }
       } else {
@@ -216,16 +298,25 @@ export function WorkoutClient({
               .not("actual_weight", "is", null)
               .not("actual_reps", "is", null)
               .order("created_at", { ascending: false })
-              .limit(5)
-          )
+              .limit(5),
+          ),
         );
         uniqueExerciseIds.forEach((eid, i) => {
           historyMap.set(
             eid,
             (historyResults[i].data || [])
-              .filter((h) => h.actual_weight != null && h.actual_reps != null && h.difficulty != null)
+              .filter(
+                (h) =>
+                  h.actual_weight != null &&
+                  h.actual_reps != null &&
+                  h.difficulty != null,
+              )
               .reverse()
-              .map((h) => ({ weight: h.actual_weight!, reps: h.actual_reps!, difficulty: h.difficulty as Difficulty }))
+              .map((h) => ({
+                weight: h.actual_weight!,
+                reps: h.actual_reps!,
+                difficulty: h.difficulty as Difficulty,
+              })),
           );
         });
       }
@@ -235,12 +326,11 @@ export function WorkoutClient({
         if (!ex) continue;
 
         const exerciseHistory = historyMap.get(te.exercise_id) || [];
-
         const prescription = calculatePrescription(
           exerciseHistory,
           ex.weight_increment,
           te.min_reps,
-          te.max_reps
+          te.max_reps,
         );
 
         for (let s = 1; s <= te.sets; s++) {
@@ -252,8 +342,8 @@ export function WorkoutClient({
             setNumber: s,
             prescribedWeight: prescription.weight,
             prescribedReps: prescription.targetReps,
-            actualWeight: prescription.weight,
-            actualReps: prescription.targetReps,
+            actualWeight: String(prescription.weight),
+            actualReps: String(prescription.targetReps),
             completed: false,
             difficulty: null,
           });
@@ -285,26 +375,37 @@ export function WorkoutClient({
         }
       }
 
+      const now = new Date();
       setSets(newSets);
       setCurrentExerciseIndex(0);
-      setElapsedSeconds(0);
+      setStartedAt(now);
       setPhase("active");
     } catch (err) {
       console.error("Failed to start workout:", err);
     } finally {
       setLoading(false);
     }
-  }, [selectedTemplate, supabase, userId, templateExercises, exerciseMap, demoMode]);
+  }, [
+    selectedTemplate,
+    supabase,
+    userId,
+    templateExercises,
+    exerciseMap,
+    demoMode,
+  ]);
 
   const completeSet = useCallback(
     async (setId: string) => {
       const s = sets.find((s) => s.id === setId);
       if (!s || s.completed) return;
 
+      const weight = parseFloat(s.actualWeight) || 0;
+      const reps = parseInt(s.actualReps) || 0;
+
       if (demoMode) {
         demoUpdateSetLog(setId, {
-          actual_weight: s.actualWeight,
-          actual_reps: s.actualReps,
+          actual_weight: weight,
+          actual_reps: reps,
           completed: true,
           completed_at: new Date().toISOString(),
         });
@@ -312,8 +413,8 @@ export function WorkoutClient({
         await supabase!
           .from("set_logs")
           .update({
-            actual_weight: s.actualWeight,
-            actual_reps: s.actualReps,
+            actual_weight: weight,
+            actual_reps: reps,
             completed: true,
             completed_at: new Date().toISOString(),
           })
@@ -322,23 +423,27 @@ export function WorkoutClient({
 
       setSets((prev) =>
         prev.map((set) =>
-          set.id === setId ? { ...set, completed: true } : set
-        )
+          set.id === setId
+            ? {
+                ...set,
+                completed: true,
+                actualWeight: String(weight),
+                actualReps: String(reps),
+              }
+            : set,
+        ),
       );
     },
-    [sets, supabase, demoMode]
+    [sets, supabase, demoMode],
   );
 
   const setDifficulty = useCallback(
     async (difficulty: Difficulty) => {
       if (!currentGroup) return;
-
       const setIds = currentGroup.sets.map((s) => s.id);
 
       if (demoMode) {
-        for (const id of setIds) {
-          demoUpdateSetLog(id, { difficulty });
-        }
+        for (const id of setIds) demoUpdateSetLog(id, { difficulty });
       } else {
         await supabase!
           .from("set_logs")
@@ -347,12 +452,10 @@ export function WorkoutClient({
       }
 
       setSets((prev) =>
-        prev.map((s) =>
-          setIds.includes(s.id) ? { ...s, difficulty } : s
-        )
+        prev.map((s) => (setIds.includes(s.id) ? { ...s, difficulty } : s)),
       );
     },
-    [currentGroup, supabase, demoMode]
+    [currentGroup, supabase, demoMode],
   );
 
   const nextExercise = useCallback(() => {
@@ -371,16 +474,17 @@ export function WorkoutClient({
         .update({ completed_at: new Date().toISOString() })
         .eq("id", sessionId);
     }
+    clearState();
     setPhase("complete");
   }, [sessionId, supabase, demoMode]);
 
   const updateSetValue = (
     setId: string,
     field: "actualWeight" | "actualReps",
-    value: number
+    value: string,
   ) => {
     setSets((prev) =>
-      prev.map((s) => (s.id === setId ? { ...s, [field]: value } : s))
+      prev.map((s) => (s.id === setId ? { ...s, [field]: value } : s)),
     );
   };
 
@@ -408,7 +512,7 @@ export function WorkoutClient({
                 key={t.id}
                 className={cn(
                   "cursor-pointer transition-all",
-                  isSelected && "ring-2 ring-accent border-accent"
+                  isSelected && "ring-2 ring-accent border-accent",
                 )}
                 onClick={() => setSelectedTemplate(t)}
               >
@@ -416,9 +520,7 @@ export function WorkoutClient({
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <h3 className="font-semibold">{t.name}</h3>
-                      {isNext && (
-                        <Badge variant="secondary">Up Next</Badge>
-                      )}
+                      {isNext && <Badge variant="secondary">Up Next</Badge>}
                     </div>
                     <span className="text-xs text-foreground-muted">
                       Day {t.day_number}
@@ -468,18 +570,14 @@ export function WorkoutClient({
         </div>
         <div>
           <h1 className="text-2xl font-bold">Workout Complete!</h1>
-          <p className="text-foreground-muted mt-2">
-            {selectedTemplate?.name}
-          </p>
+          <p className="text-foreground-muted mt-2">{selectedTemplate?.name}</p>
         </div>
 
         <div className="grid grid-cols-2 gap-4 w-full max-w-xs">
           <Card>
             <CardContent className="p-4 text-center">
               <Clock className="h-5 w-5 mx-auto mb-1 text-accent" />
-              <p className="text-xl font-bold">
-                {formatTime(elapsedSeconds)}
-              </p>
+              <p className="text-xl font-bold">{formatTime(elapsedSeconds)}</p>
               <p className="text-xs text-foreground-muted">Duration</p>
             </CardContent>
           </Card>
@@ -532,7 +630,8 @@ export function WorkoutClient({
             setSets([]);
             setSessionId(null);
             setCurrentExerciseIndex(0);
-            setElapsedSeconds(0);
+            setStartedAt(null);
+            clearState();
           }}
         >
           Done
@@ -543,16 +642,13 @@ export function WorkoutClient({
 
   // ---- ACTIVE PHASE ----
   const isLastExercise = currentExerciseIndex === exerciseGroups.length - 1;
-  const allDone = sets.every((s) => s.completed) && sets.every((s) => s.difficulty !== null);
 
   return (
     <div className="flex flex-col min-h-[calc(100dvh-8rem)]">
       {/* Top bar */}
       <div className="px-4 py-3 border-b border-border space-y-2">
         <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">
-            {selectedTemplate?.name}
-          </span>
+          <span className="text-sm font-medium">{selectedTemplate?.name}</span>
           <span className="text-sm text-foreground-muted font-mono">
             {formatTime(elapsedSeconds)}
           </span>
@@ -577,6 +673,9 @@ export function WorkoutClient({
                   <Badge variant="secondary">
                     {currentGroup.exercise.muscle_group}
                   </Badge>
+                  {currentGroup.templateExercise.is_backoff_set && (
+                    <Badge variant="warning">Backoff</Badge>
+                  )}
                   <span className="text-xs text-foreground-muted">
                     Exercise {currentExerciseIndex + 1} of{" "}
                     {exerciseGroups.length}
@@ -592,7 +691,7 @@ export function WorkoutClient({
                   key={s.id}
                   className={cn(
                     "transition-all",
-                    s.completed && "border-success/50 bg-success/5"
+                    s.completed && "border-success/50 bg-success/5",
                   )}
                 >
                   <CardContent className="p-4">
@@ -612,36 +711,56 @@ export function WorkoutClient({
                           <label className="text-xs text-foreground-muted block mb-1">
                             Weight (kg)
                           </label>
-                          <Input
-                            type="number"
+                          <input
+                            type="text"
                             inputMode="decimal"
                             value={s.actualWeight}
-                            onChange={(e) =>
-                              updateSetValue(
-                                s.id,
-                                "actualWeight",
-                                parseFloat(e.target.value) || 0
-                              )
-                            }
-                            className="h-12 text-center text-lg font-bold"
+                            onFocus={(e) => {
+                              if (s.actualWeight === "0") {
+                                updateSetValue(s.id, "actualWeight", "");
+                              }
+                              e.target.select();
+                            }}
+                            onBlur={() => {
+                              if (s.actualWeight === "") {
+                                updateSetValue(s.id, "actualWeight", "0");
+                              }
+                            }}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v === "" || /^\d*\.?\d*$/.test(v)) {
+                                updateSetValue(s.id, "actualWeight", v);
+                              }
+                            }}
+                            className="h-12 w-full text-center text-lg font-bold rounded-lg border border-border bg-background-secondary px-3 focus:outline-none focus:ring-2 focus:ring-accent"
                           />
                         </div>
                         <div className="flex-1">
                           <label className="text-xs text-foreground-muted block mb-1">
                             Reps
                           </label>
-                          <Input
-                            type="number"
+                          <input
+                            type="text"
                             inputMode="numeric"
                             value={s.actualReps}
-                            onChange={(e) =>
-                              updateSetValue(
-                                s.id,
-                                "actualReps",
-                                parseInt(e.target.value) || 0
-                              )
-                            }
-                            className="h-12 text-center text-lg font-bold"
+                            onFocus={(e) => {
+                              if (s.actualReps === "0") {
+                                updateSetValue(s.id, "actualReps", "");
+                              }
+                              e.target.select();
+                            }}
+                            onBlur={() => {
+                              if (s.actualReps === "") {
+                                updateSetValue(s.id, "actualReps", "0");
+                              }
+                            }}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v === "" || /^\d+$/.test(v)) {
+                                updateSetValue(s.id, "actualReps", v);
+                              }
+                            }}
+                            className="h-12 w-full text-center text-lg font-bold rounded-lg border border-border bg-background-secondary px-3 focus:outline-none focus:ring-2 focus:ring-accent"
                           />
                         </div>
                         <Button
@@ -671,8 +790,7 @@ export function WorkoutClient({
 
                     {!s.completed && (
                       <p className="text-xs text-foreground-muted mt-2">
-                        Target: {s.prescribedWeight}kg x {s.prescribedReps}{" "}
-                        reps
+                        Target: {s.prescribedWeight}kg x {s.prescribedReps} reps
                       </p>
                     )}
                   </CardContent>
@@ -698,8 +816,7 @@ export function WorkoutClient({
                         {
                           value: "challenging" as Difficulty,
                           label: "Challenging",
-                          color:
-                            "bg-warning hover:bg-warning-hover text-black",
+                          color: "bg-warning hover:bg-warning-hover text-black",
                         },
                         {
                           value: "hard" as Difficulty,
@@ -714,7 +831,7 @@ export function WorkoutClient({
                         onClick={() => setDifficulty(d.value)}
                         className={cn(
                           "h-14 rounded-lg font-semibold text-sm transition-colors cursor-pointer",
-                          d.color
+                          d.color,
                         )}
                       >
                         {d.label}
@@ -723,6 +840,19 @@ export function WorkoutClient({
                   </div>
                 </CardContent>
               </Card>
+            )}
+
+            {/* Next exercise preview */}
+            {nextGroup && (
+              <div className="text-xs text-foreground-muted text-center pt-1">
+                Up next:{" "}
+                <span className="font-medium text-foreground">
+                  {nextGroup.exercise.name}
+                </span>{" "}
+                — {nextGroup.templateExercise.sets} sets x{" "}
+                {nextGroup.templateExercise.min_reps}-
+                {nextGroup.templateExercise.max_reps} reps
+              </div>
             )}
 
             {/* Next exercise / Finish button */}
