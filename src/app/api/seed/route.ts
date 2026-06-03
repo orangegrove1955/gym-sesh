@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { DEFAULT_EXERCISES } from "@/lib/exercises";
 import { getDefaultProgramData } from "@/lib/default-program";
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
 
@@ -16,6 +16,10 @@ export async function POST() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // Check for force reseed via query param
+    const url = new URL(request.url);
+    const force = url.searchParams.get("force") === "true";
+
     // Check if user already has a program
     const { data: existingPrograms } = await supabase
       .from("programs")
@@ -24,7 +28,15 @@ export async function POST() {
       .limit(1);
 
     if (existingPrograms && existingPrograms.length > 0) {
-      return NextResponse.json({ message: "Program already exists, skipping seed" });
+      if (!force) {
+        return NextResponse.json({ message: "Program already exists. Use ?force=true to reseed." });
+      }
+      // Delete existing program (cascades to templates, template_exercises)
+      for (const p of existingPrograms) {
+        await supabase.from("programs").delete().eq("id", p.id);
+      }
+      // Delete existing exercises owned by this user
+      await supabase.from("exercise_library").delete().eq("user_id", user.id);
     }
 
     // Insert exercises owned by this user
