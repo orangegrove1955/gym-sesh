@@ -31,12 +31,11 @@ export async function POST(request: NextRequest) {
       if (!force) {
         return NextResponse.json({ message: "Programs already exist. Use ?force=true to reseed." });
       }
-      // Delete all existing programs (cascades to templates, template_exercises)
+      // Delete existing programs (cascades to templates, template_exercises)
+      // Exercises are preserved via upsert so workout history stays linked
       for (const p of existingPrograms) {
         await supabase.from("programs").delete().eq("id", p.id);
       }
-      // Delete existing exercises owned by this user
-      await supabase.from("exercise_library").delete().eq("user_id", user.id);
     }
 
     // Insert exercises owned by this user
