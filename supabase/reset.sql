@@ -83,7 +83,7 @@ create table public.template_exercises (
 create table public.workout_sessions (
   id uuid primary key default uuid_generate_v4(),
   user_id uuid not null references auth.users on delete cascade,
-  template_id uuid not null references public.workout_templates on delete cascade,
+  template_id uuid references public.workout_templates on delete set null,
   started_at timestamptz default now() not null,
   completed_at timestamptz,
   notes text,
@@ -93,8 +93,8 @@ create table public.workout_sessions (
 create table public.set_logs (
   id uuid primary key default uuid_generate_v4(),
   session_id uuid not null references public.workout_sessions on delete cascade,
-  exercise_id uuid not null references public.exercise_library on delete cascade,
-  template_exercise_id uuid not null references public.template_exercises on delete cascade,
+  exercise_id uuid references public.exercise_library on delete set null,
+  template_exercise_id uuid references public.template_exercises on delete set null,
   set_number int not null,
   prescribed_weight numeric,
   prescribed_reps int,

@@ -67,6 +67,7 @@ function computeStats(
 
   const muscleDistribution: Record<string, number> = {};
   for (const sl of userSetLogs) {
+    if (!sl.exercise_id) continue;
     const ex = exerciseMap.get(sl.exercise_id);
     if (ex) {
       muscleDistribution[ex.muscle_group] =
@@ -136,7 +137,7 @@ function computeStats(
     weeklyVolumeMap[weekKey] = (weeklyVolumeMap[weekKey] || 0) + vol;
     sessionVolumeMap[dateKey] = (sessionVolumeMap[dateKey] || 0) + vol;
 
-    const ex = exerciseMap.get(sl.exercise_id);
+    const ex = sl.exercise_id ? exerciseMap.get(sl.exercise_id) : null;
     if (ex) {
       if (!muscleWeeklyMap[weekKey]) muscleWeeklyMap[weekKey] = {};
       muscleWeeklyMap[weekKey][ex.muscle_group] =

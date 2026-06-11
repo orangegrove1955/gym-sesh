@@ -169,7 +169,7 @@ export type Database = {
         Row: {
           id: string;
           user_id: string;
-          template_id: string;
+          template_id: string | null;
           started_at: string;
           completed_at: string | null;
           notes: string | null;
@@ -262,8 +262,8 @@ export type Database = {
         Row: {
           id: string;
           session_id: string;
-          exercise_id: string;
-          template_exercise_id: string;
+          exercise_id: string | null;
+          template_exercise_id: string | null;
           set_number: number;
           prescribed_weight: number | null;
           prescribed_reps: number | null;
