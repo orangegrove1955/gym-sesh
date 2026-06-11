@@ -24,51 +24,50 @@ export default function ProgramPage() {
   const [allPrograms, setAllPrograms] = useState<Program[]>([]);
   const [switching, setSwitching] = useState(false);
 
-  const loadData = useCallback(() => {
-    fetch("/api/program")
-      .then((r) => r.json())
-      .then(setData)
-      .catch(console.error);
+  const loadData = useCallback(async () => {
+    const res = await fetch("/api/program");
+    const json = await res.json();
+    setData(json);
+    return json;
+  }, []);
+
+  const loadAllPrograms = useCallback(async () => {
+    const supabase = createClient();
+    const { data: programs } = await supabase
+      .from("programs")
+      .select("*")
+      .order("created_at", { ascending: true });
+    if (programs) setAllPrograms(programs as Program[]);
   }, []);
 
   useEffect(() => {
     loadData();
-    // Also fetch all programs for the switcher
-    const supabase = createClient();
-    supabase
-      .from("programs")
-      .select("*")
-      .order("created_at", { ascending: true })
-      .then(({ data: programs }) => {
-        if (programs) setAllPrograms(programs as Program[]);
-      });
-  }, [loadData]);
+    loadAllPrograms();
+  }, [loadData, loadAllPrograms]);
 
   const switchProgram = useCallback(
     async (programId: string) => {
       setSwitching(true);
-      const supabase = createClient();
-      // Deactivate all programs
-      const userId = data?.userId;
-      if (!userId) return;
-      await supabase
-        .from("programs")
-        .update({ is_active: false })
-        .eq("user_id", userId);
-      // Activate selected
-      await supabase
-        .from("programs")
-        .update({ is_active: true })
-        .eq("id", programId);
-      // Update local state
-      setAllPrograms((prev) =>
-        prev.map((p) => ({ ...p, is_active: p.id === programId })),
-      );
-      // Reload program data
-      loadData();
-      setSwitching(false);
+      try {
+        const supabase = createClient();
+        const userId = data?.userId;
+        if (!userId) return;
+        // Deactivate all, then activate selected
+        await supabase
+          .from("programs")
+          .update({ is_active: false })
+          .eq("user_id", userId);
+        await supabase
+          .from("programs")
+          .update({ is_active: true })
+          .eq("id", programId);
+        // Reload both program data and programs list
+        await Promise.all([loadData(), loadAllPrograms()]);
+      } finally {
+        setSwitching(false);
+      }
     },
-    [data?.userId, loadData],
+    [data?.userId, loadData, loadAllPrograms],
   );
 
   if (!data) return <ProgramLoading />;
