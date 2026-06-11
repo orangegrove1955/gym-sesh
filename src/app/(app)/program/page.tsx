@@ -1,103 +1,93 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { ProgramEditor } from "./program-editor";
-import ProgramLoading from "./loading";
-import { createClient } from "@/lib/supabase/client";
-import type {
-  Program,
-  WorkoutTemplate,
-  TemplateExercise,
-  Exercise,
-} from "@/types/database";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ChevronRight } from "lucide-react";
 
-interface ProgramData {
-  program: Program | null;
-  templates: WorkoutTemplate[];
-  templateExercises: TemplateExercise[];
-  exercises: Exercise[];
-  userId: string;
+interface ProgramWithTemplates {
+  id: string;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+  workout_templates: {
+    id: string;
+    name: string;
+    day_number: number;
+    focus_areas: string[];
+  }[];
 }
 
 export default function ProgramPage() {
-  const [data, setData] = useState<ProgramData | null>(null);
-  const [allPrograms, setAllPrograms] = useState<Program[]>([]);
-  const [switching, setSwitching] = useState(false);
-
-  const loadData = useCallback(async () => {
-    const res = await fetch("/api/program");
-    const json = await res.json();
-    setData(json);
-    return json;
-  }, []);
-
-  const loadAllPrograms = useCallback(async () => {
-    const supabase = createClient();
-    const { data: programs } = await supabase
-      .from("programs")
-      .select("*")
-      .order("created_at", { ascending: true });
-    if (programs) setAllPrograms(programs as Program[]);
-  }, []);
+  const router = useRouter();
+  const [programs, setPrograms] = useState<ProgramWithTemplates[] | null>(null);
 
   useEffect(() => {
-    loadData();
-    loadAllPrograms();
-  }, [loadData, loadAllPrograms]);
+    fetch("/api/program")
+      .then((r) => r.json())
+      .then((data) => setPrograms(data.programs))
+      .catch(console.error);
+  }, []);
 
-  const switchProgram = useCallback(
-    async (programId: string) => {
-      setSwitching(true);
-      try {
-        const supabase = createClient();
-        const userId = data?.userId;
-        if (!userId) return;
-        // Deactivate all, then activate selected
-        await supabase
-          .from("programs")
-          .update({ is_active: false })
-          .eq("user_id", userId);
-        await supabase
-          .from("programs")
-          .update({ is_active: true })
-          .eq("id", programId);
-        // Reload both program data and programs list
-        await Promise.all([loadData(), loadAllPrograms()]);
-      } finally {
-        setSwitching(false);
-      }
-    },
-    [data?.userId, loadData, loadAllPrograms],
-  );
-
-  if (!data) return <ProgramLoading />;
+  if (!programs) {
+    return (
+      <div className="px-4 py-6 space-y-4">
+        <Skeleton className="h-8 w-32" />
+        <Skeleton className="h-28 w-full rounded-lg" />
+        <Skeleton className="h-28 w-full rounded-lg" />
+      </div>
+    );
+  }
 
   return (
-    <div className="container mx-auto px-4 py-6 max-w-4xl">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Program</h1>
-        {allPrograms.length > 1 && (
-          <select
-            value={data.program?.id ?? ""}
-            onChange={(e) => switchProgram(e.target.value)}
-            disabled={switching}
-            className="text-sm rounded-lg border border-border bg-background-secondary px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-accent"
-          >
-            {allPrograms.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        )}
+    <div className="px-4 py-6 space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold">Programs</h1>
+        <p className="text-foreground-muted text-sm mt-1">
+          Tap a program to view and edit
+        </p>
       </div>
-      <ProgramEditor
-        program={data.program}
-        templates={data.templates}
-        templateExercises={data.templateExercises}
-        exercises={data.exercises}
-        userId={data.userId}
-      />
+
+      <div className="space-y-3">
+        {programs.map((p) => (
+          <Card
+            key={p.id}
+            className="cursor-pointer transition-all hover:border-accent active:scale-[0.98]"
+            onClick={() => router.push(`/program/${p.id}`)}
+          >
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h2 className="font-semibold truncate">{p.name}</h2>
+                    {p.is_active && (
+                      <Badge variant="success" className="shrink-0">Active</Badge>
+                    )}
+                  </div>
+                  {p.description && (
+                    <p className="text-xs text-foreground-muted line-clamp-2 mb-2">
+                      {p.description}
+                    </p>
+                  )}
+                  <div className="flex flex-wrap gap-1.5">
+                    {p.workout_templates
+                      .sort((a, b) => a.day_number - b.day_number)
+                      .map((t) => (
+                        <Badge key={t.id} variant="secondary" className="text-xs">
+                          {t.name}
+                        </Badge>
+                      ))}
+                  </div>
+                </div>
+                <ChevronRight className="h-5 w-5 text-foreground-muted shrink-0 ml-2" />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
     </div>
   );
 }
