@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { DEFAULT_EXERCISES } from "@/lib/exercises";
 import { getDefaultProgramData } from "@/lib/default-program";
+import { getPPLProgramData } from "@/lib/ppl-program";
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,18 +21,17 @@ export async function POST(request: NextRequest) {
     const url = new URL(request.url);
     const force = url.searchParams.get("force") === "true";
 
-    // Check if user already has a program
+    // Check if user already has programs
     const { data: existingPrograms } = await supabase
       .from("programs")
       .select("id")
-      .eq("user_id", user.id)
-      .limit(1);
+      .eq("user_id", user.id);
 
     if (existingPrograms && existingPrograms.length > 0) {
       if (!force) {
-        return NextResponse.json({ message: "Program already exists. Use ?force=true to reseed." });
+        return NextResponse.json({ message: "Programs already exist. Use ?force=true to reseed." });
       }
-      // Delete existing program (cascades to templates, template_exercises)
+      // Delete all existing programs (cascades to templates, template_exercises)
       for (const p of existingPrograms) {
         await supabase.from("programs").delete().eq("id", p.id);
       }
@@ -65,69 +65,73 @@ export async function POST(request: NextRequest) {
 
     const exerciseMap = new Map(exercises.map((e) => [e.name, e.id]));
 
-    const programData = getDefaultProgramData();
+    // Seed all programs
+    const allPrograms = [getDefaultProgramData(), getPPLProgramData()];
 
-    // Create program
-    const { data: program, error: programError } = await supabase
-      .from("programs")
-      .insert({
-        user_id: user.id,
-        name: programData.program.name,
-        description: programData.program.description,
-        is_active: true,
-      })
-      .select("id")
-      .single();
+    for (let pIdx = 0; pIdx < allPrograms.length; pIdx++) {
+      const programData = allPrograms[pIdx];
 
-    if (programError || !program) {
-      return NextResponse.json({ error: "Failed to create program", details: programError }, { status: 500 });
-    }
-
-    // Create workout templates and their exercises
-    for (const day of programData.days) {
-      const { data: template, error: templateError } = await supabase
-        .from("workout_templates")
+      // First program is active by default
+      const { data: program, error: programError } = await supabase
+        .from("programs")
         .insert({
-          program_id: program.id,
-          day_number: day.day_number,
-          name: day.name,
-          focus_areas: day.focus_areas,
+          user_id: user.id,
+          name: programData.program.name,
+          description: programData.program.description,
+          is_active: pIdx === 0,
         })
         .select("id")
         .single();
 
-      if (templateError || !template) {
-        return NextResponse.json({ error: `Failed to create template for day ${day.day_number}`, details: templateError }, { status: 500 });
+      if (programError || !program) {
+        return NextResponse.json({ error: `Failed to create program: ${programData.program.name}`, details: programError }, { status: 500 });
       }
 
-      const templateExercises = day.exercises.map((ex) => {
-        const exerciseId = exerciseMap.get(ex.exercise_name);
-        if (!exerciseId) {
-          throw new Error(`Exercise not found: ${ex.exercise_name}`);
+      for (const day of programData.days) {
+        const { data: template, error: templateError } = await supabase
+          .from("workout_templates")
+          .insert({
+            program_id: program.id,
+            day_number: day.day_number,
+            name: day.name,
+            focus_areas: day.focus_areas,
+          })
+          .select("id")
+          .single();
+
+        if (templateError || !template) {
+          return NextResponse.json({ error: `Failed to create template for day ${day.day_number}`, details: templateError }, { status: 500 });
         }
-        return {
-          template_id: template.id,
-          exercise_id: exerciseId,
-          sort_order: ex.sort_order,
-          sets: ex.sets,
-          min_reps: ex.min_reps,
-          max_reps: ex.max_reps,
-          is_backoff_set: ex.is_backoff_set,
-          rest_seconds: ex.rest_seconds,
-          notes: ex.notes ?? null,
-        };
-      });
 
-      const { error: teError } = await supabase
-        .from("template_exercises")
-        .insert(templateExercises);
+        const templateExercises = day.exercises.map((ex) => {
+          const exerciseId = exerciseMap.get(ex.exercise_name);
+          if (!exerciseId) {
+            throw new Error(`Exercise not found: ${ex.exercise_name}`);
+          }
+          return {
+            template_id: template.id,
+            exercise_id: exerciseId,
+            sort_order: ex.sort_order,
+            sets: ex.sets,
+            min_reps: ex.min_reps,
+            max_reps: ex.max_reps,
+            is_backoff_set: ex.is_backoff_set,
+            rest_seconds: ex.rest_seconds,
+            notes: ex.notes ?? null,
+          };
+        });
 
-      if (teError) {
-        return NextResponse.json({ error: `Failed to create exercises for day ${day.day_number}`, details: teError }, { status: 500 });
+        const { error: teError } = await supabase
+          .from("template_exercises")
+          .insert(templateExercises);
+
+        if (teError) {
+          return NextResponse.json({ error: `Failed to create exercises for ${programData.program.name} day ${day.day_number}`, details: teError }, { status: 500 });
+        }
       }
     }
 
-    return NextResponse.json({ message: "Seed completed successfully" });
+    return NextResponse.json({ message: `Seed completed — ${allPrograms.length} programs created` });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });

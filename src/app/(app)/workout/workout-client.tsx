@@ -68,6 +68,7 @@ interface PersistedState {
   sets: SetState[];
   currentExerciseIndex: number;
   skippedIndices: number[];
+  fullySkippedIndices: number[];
   startedAt: string;
   selectedTemplateId: string | null;
 }
@@ -93,6 +94,15 @@ function clearState() {
   } catch {}
 }
 
+const TIMED_EXERCISE_NAMES = new Set(["Child's Pose", "Spinal Twist"]);
+
+function isTimedExercise(exerciseName: string): boolean {
+  return (
+    exerciseName.toLowerCase().includes("stretch") ||
+    TIMED_EXERCISE_NAMES.has(exerciseName)
+  );
+}
+
 export function WorkoutClient({
   userId,
   templates,
@@ -110,12 +120,16 @@ export function WorkoutClient({
   const [sets, setSets] = useState<SetState[]>([]);
   const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
   const [skippedIndices, setSkippedIndices] = useState<Set<number>>(new Set());
+  const [fullySkippedIndices, setFullySkippedIndices] = useState<Set<number>>(new Set());
   const [startedAt, setStartedAt] = useState<Date | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [loading, setLoading] = useState(false);
   const [restored, setRestored] = useState(false);
   const [restTimer, setRestTimer] = useState<number | null>(null); // seconds remaining
   const [restTimerActive, setRestTimerActive] = useState(false);
+  const [stretchCountdown, setStretchCountdown] = useState<number | null>(null);
+  const [stretchTimerActive, setStretchTimerActive] = useState(false);
+  const [stretchSetId, setStretchSetId] = useState<string | null>(null);
   const [historyExerciseId, setHistoryExerciseId] = useState<string | null>(null);
   const [historyExerciseName, setHistoryExerciseName] = useState("");
 
@@ -134,6 +148,7 @@ export function WorkoutClient({
       setSets(saved.sets);
       setCurrentExerciseIndex(saved.currentExerciseIndex);
       setSkippedIndices(new Set(saved.skippedIndices || []));
+      setFullySkippedIndices(new Set(saved.fullySkippedIndices || []));
       setStartedAt(new Date(saved.startedAt));
       const t = templates.find((t) => t.id === saved.selectedTemplateId);
       if (t) setSelectedTemplate(t);
@@ -155,6 +170,7 @@ export function WorkoutClient({
         sets,
         currentExerciseIndex,
         skippedIndices: [...skippedIndices],
+        fullySkippedIndices: [...fullySkippedIndices],
         startedAt: startedAt?.toISOString() || new Date().toISOString(),
         selectedTemplateId: selectedTemplate?.id || null,
       });
@@ -200,6 +216,24 @@ export function WorkoutClient({
     }, 1000);
     return () => clearInterval(interval);
   }, [restTimerActive, restTimer]);
+
+  // Stretch timer countdown (auto-complete handled separately after completeSet definition)
+  useEffect(() => {
+    if (!stretchTimerActive || stretchCountdown === null || stretchCountdown <= 0) return;
+    const interval = setInterval(() => {
+      setStretchCountdown((prev) => {
+        if (prev === null || prev <= 1) {
+          setStretchTimerActive(false);
+          if (typeof navigator !== "undefined" && navigator.vibrate) {
+            navigator.vibrate([200, 100, 200]);
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [stretchTimerActive, stretchCountdown]);
 
   // Template exercises for selected template
   const currentTemplateExercises = useMemo(() => {
@@ -531,6 +565,20 @@ export function WorkoutClient({
     [sets, supabase, demoMode, currentGroup],
   );
 
+  // Auto-complete stretch set when countdown reaches 0
+  useEffect(() => {
+    if (stretchCountdown === 0 && !stretchTimerActive && stretchSetId) {
+      completeSet(stretchSetId);
+      setStretchSetId(null);
+    }
+  }, [stretchCountdown, stretchTimerActive, stretchSetId, completeSet]);
+
+  const startStretchTimer = useCallback((setId: string, seconds: number) => {
+    setStretchSetId(setId);
+    setStretchCountdown(seconds);
+    setStretchTimerActive(true);
+  }, []);
+
   const setDifficulty = useCallback(
     async (difficulty: Difficulty) => {
       if (!currentGroup) return;
@@ -554,15 +602,39 @@ export function WorkoutClient({
 
   const skipExercise = useCallback(() => {
     setSkippedIndices((prev) => new Set([...prev, currentExerciseIndex]));
-    // Move to next non-skipped exercise
+    // Move to next non-skipped, non-fully-skipped exercise
     for (let i = currentExerciseIndex + 1; i < exerciseGroups.length; i++) {
-      if (!skippedIndices.has(i)) {
+      if (!skippedIndices.has(i) && !fullySkippedIndices.has(i)) {
         setCurrentExerciseIndex(i);
         return;
       }
     }
-    // If all remaining are skipped, stay put (shouldn't normally happen)
-  }, [currentExerciseIndex, exerciseGroups.length, skippedIndices]);
+  }, [currentExerciseIndex, exerciseGroups.length, skippedIndices, fullySkippedIndices]);
+
+  const fullySkipExercise = useCallback(() => {
+    // Remove from skipped, add to fully skipped (permanently skip)
+    setSkippedIndices((prev) => {
+      const next = new Set(prev);
+      next.delete(currentExerciseIndex);
+      return next;
+    });
+    setFullySkippedIndices((prev) => new Set([...prev, currentExerciseIndex]));
+    // Navigate to next skipped exercise, or stay if none
+    const remainingSkipped = [...skippedIndices]
+      .filter((i) => i !== currentExerciseIndex)
+      .sort((a, b) => a - b);
+    if (remainingSkipped.length > 0) {
+      // Go to next skipped (remove from skipped so goToExercise works)
+      const nextIdx = remainingSkipped[0];
+      setSkippedIndices((prev) => {
+        const next = new Set(prev);
+        next.delete(nextIdx);
+        return next;
+      });
+      setCurrentExerciseIndex(nextIdx);
+    }
+    // If no more skipped, the finish button will appear
+  }, [currentExerciseIndex, skippedIndices]);
 
   const goToExercise = useCallback((index: number) => {
     setSkippedIndices((prev) => {
@@ -574,16 +646,22 @@ export function WorkoutClient({
   }, []);
 
   const nextExercise = useCallback(() => {
-    // Find next non-skipped, non-completed exercise
+    // Find next non-skipped, non-fully-skipped, non-completed exercise
     for (let i = currentExerciseIndex + 1; i < exerciseGroups.length; i++) {
-      if (!skippedIndices.has(i)) {
-        setCurrentExerciseIndex(i);
-        return;
-      }
+      if (skippedIndices.has(i) || fullySkippedIndices.has(i)) continue;
+      const groupSets = exerciseGroups[i].sets;
+      if (groupSets.every((s) => s.completed)) continue;
+      setCurrentExerciseIndex(i);
+      return;
     }
-    // Check if there are skipped exercises to come back to
-    // If not, we're at the end
-  }, [currentExerciseIndex, exerciseGroups.length, skippedIndices]);
+    // No incomplete exercises ahead — go to first skipped one
+    const remaining = [...skippedIndices].sort((a, b) => a - b);
+    if (remaining.length > 0) {
+      goToExercise(remaining[0]);
+      return;
+    }
+    // Nothing left — finish button will show
+  }, [currentExerciseIndex, exerciseGroups, skippedIndices, fullySkippedIndices, goToExercise]);
 
   const finishWorkout = useCallback(async () => {
     if (!sessionId) return;
@@ -767,6 +845,7 @@ export function WorkoutClient({
             setSessionId(null);
             setCurrentExerciseIndex(0);
             setSkippedIndices(new Set());
+            setFullySkippedIndices(new Set());
             setStartedAt(null);
             clearState();
           }}
@@ -778,12 +857,23 @@ export function WorkoutClient({
   }
 
   // ---- ACTIVE PHASE ----
-  // Check if this is the last non-skipped exercise
+  // Check if this is the last exercise that needs action
   const remainingIndices = exerciseGroups
     .map((_, i) => i)
-    .filter((i) => i > currentExerciseIndex && !skippedIndices.has(i));
+    .filter(
+      (i) =>
+        i > currentExerciseIndex &&
+        !skippedIndices.has(i) &&
+        !fullySkippedIndices.has(i) &&
+        !exerciseGroups[i].sets.every((s) => s.completed),
+    );
   const isLastExercise = remainingIndices.length === 0;
   const hasSkippedExercises = skippedIndices.size > 0;
+  const currentIsTimed = currentGroup
+    ? isTimedExercise(currentGroup.exercise.name)
+    : false;
+  // For timed exercises, auto-skip difficulty — treat as always set
+  const effectiveDifficultySet = currentIsTimed || currentExerciseDifficultySet;
 
   return (
     <div className="flex flex-col min-h-[calc(100dvh-8rem)]">
@@ -851,16 +941,38 @@ export function WorkoutClient({
                   </span>
                 </div>
               </div>
-              {!currentExerciseDone && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={skipExercise}
-                  className="text-foreground-muted"
-                >
-                  Skip
-                </Button>
-              )}
+              {!currentExerciseDone && (() => {
+                // Show "Don't Complete" if we've returned to this exercise
+                // (i.e., there are completed exercises after this one)
+                const isReturnedTo = exerciseGroups.some(
+                  (g, i) =>
+                    i > currentExerciseIndex &&
+                    !fullySkippedIndices.has(i) &&
+                    g.sets.every((s) => s.completed),
+                );
+                return (
+                  <div className="flex gap-1">
+                    {isReturnedTo && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={fullySkipExercise}
+                        className="text-destructive text-xs"
+                      >
+                        Don&apos;t Complete
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={skipExercise}
+                      className="text-foreground-muted"
+                    >
+                      Skip
+                    </Button>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Sets */}
@@ -889,79 +1001,123 @@ export function WorkoutClient({
                     </div>
 
                     {!s.completed ? (
-                      <div className="flex items-end gap-3">
-                        <div className="flex-1">
-                          <label className="text-xs text-foreground-muted block mb-1">
-                            Weight (kg)
-                          </label>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={s.actualWeight}
-                            onFocus={(e) => {
-                              if (s.actualWeight === "0") {
-                                updateSetValue(s.id, "actualWeight", "");
-                              }
-                              e.target.select();
-                            }}
-                            onBlur={() => {
-                              if (s.actualWeight === "") {
-                                updateSetValue(s.id, "actualWeight", "0");
-                              }
-                            }}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              if (v === "" || /^\d*\.?\d*$/.test(v)) {
-                                updateSetValue(s.id, "actualWeight", v);
-                              }
-                            }}
-                            className="h-12 w-full text-center text-lg font-bold rounded-lg border border-border bg-background-secondary px-3 focus:outline-none focus:ring-2 focus:ring-accent"
-                          />
+                      isTimedExercise(exerciseMap.get(s.exerciseId)?.name ?? "") ? (
+                        /* Timed exercise (stretch) — show countdown timer */
+                        <div className="text-center space-y-3">
+                          {stretchSetId === s.id && stretchTimerActive ? (
+                            <>
+                              <p className="text-5xl font-bold font-mono tabular-nums text-accent">
+                                {stretchCountdown}s
+                              </p>
+                              <p className="text-xs text-foreground-muted">Hold the stretch...</p>
+                            </>
+                          ) : stretchSetId === s.id && stretchCountdown === 0 ? (
+                            <p className="text-lg font-semibold text-success">Done!</p>
+                          ) : (
+                            <>
+                              <p className="text-sm text-foreground-muted">
+                                Hold for <span className="font-bold text-foreground">{s.prescribedReps}s</span>
+                              </p>
+                              <Button
+                                size="lg"
+                                className="h-14 px-8"
+                                onClick={() => startStretchTimer(s.id, parseInt(s.actualReps) || s.prescribedReps)}
+                              >
+                                <Clock className="h-5 w-5 mr-2" />
+                                Start Timer
+                              </Button>
+                            </>
+                          )}
+                          {s.prescribedWeight > 0 && (
+                            <p className="text-xs text-foreground-muted">
+                              Notes say: {currentGroup.templateExercise.notes}
+                            </p>
+                          )}
                         </div>
-                        <div className="flex-1">
-                          <label className="text-xs text-foreground-muted block mb-1">
-                            Reps
-                          </label>
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            value={s.actualReps}
-                            onFocus={(e) => {
-                              if (s.actualReps === "0") {
-                                updateSetValue(s.id, "actualReps", "");
-                              }
-                              e.target.select();
-                            }}
-                            onBlur={() => {
-                              if (s.actualReps === "") {
-                                updateSetValue(s.id, "actualReps", "0");
-                              }
-                            }}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              if (v === "" || /^\d+$/.test(v)) {
-                                updateSetValue(s.id, "actualReps", v);
-                              }
-                            }}
-                            className="h-12 w-full text-center text-lg font-bold rounded-lg border border-border bg-background-secondary px-3 focus:outline-none focus:ring-2 focus:ring-accent"
-                          />
+                      ) : (
+                        /* Normal exercise — weight/reps inputs */
+                        <div className="flex items-end gap-3">
+                          <div className="flex-1">
+                            <label className="text-xs text-foreground-muted block mb-1">
+                              Weight (kg)
+                            </label>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={s.actualWeight}
+                              onFocus={(e) => {
+                                if (s.actualWeight === "0") {
+                                  updateSetValue(s.id, "actualWeight", "");
+                                }
+                                e.target.select();
+                              }}
+                              onBlur={() => {
+                                if (s.actualWeight === "") {
+                                  updateSetValue(s.id, "actualWeight", "0");
+                                }
+                              }}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (v === "" || /^\d*\.?\d*$/.test(v)) {
+                                  updateSetValue(s.id, "actualWeight", v);
+                                }
+                              }}
+                              className="h-12 w-full text-center text-lg font-bold rounded-lg border border-border bg-background-secondary px-3 focus:outline-none focus:ring-2 focus:ring-accent"
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <label className="text-xs text-foreground-muted block mb-1">
+                              Reps
+                            </label>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={s.actualReps}
+                              onFocus={(e) => {
+                                if (s.actualReps === "0") {
+                                  updateSetValue(s.id, "actualReps", "");
+                                }
+                                e.target.select();
+                              }}
+                              onBlur={() => {
+                                if (s.actualReps === "") {
+                                  updateSetValue(s.id, "actualReps", "0");
+                                }
+                              }}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (v === "" || /^\d+$/.test(v)) {
+                                  updateSetValue(s.id, "actualReps", v);
+                                }
+                              }}
+                              className="h-12 w-full text-center text-lg font-bold rounded-lg border border-border bg-background-secondary px-3 focus:outline-none focus:ring-2 focus:ring-accent"
+                            />
+                          </div>
+                          <Button
+                            size="lg"
+                            className="h-12 w-12 p-0 shrink-0"
+                            onClick={() => completeSet(s.id)}
+                          >
+                            <Check className="h-6 w-6" />
+                          </Button>
                         </div>
-                        <Button
-                          size="lg"
-                          className="h-12 w-12 p-0 shrink-0"
-                          onClick={() => completeSet(s.id)}
-                        >
-                          <Check className="h-6 w-6" />
-                        </Button>
-                      </div>
+                      )
                     ) : (
                       <div className="flex items-center gap-3 text-sm flex-wrap">
-                        <span>
-                          <span className="font-bold text-lg">{s.actualWeight}</span> kg
-                        </span>
-                        <span>
-                          <span className="font-bold text-lg">{s.actualReps}</span> reps
-                        </span>
+                        {isTimedExercise(exerciseMap.get(s.exerciseId)?.name ?? "") ? (
+                          <span className="text-success font-medium">
+                            {s.actualReps}s completed
+                          </span>
+                        ) : (
+                          <>
+                            <span>
+                              <span className="font-bold text-lg">{s.actualWeight}</span> kg
+                            </span>
+                            <span>
+                              <span className="font-bold text-lg">{s.actualReps}</span> reps
+                            </span>
+                          </>
+                        )}
                         {s.isBanded && <Badge variant="secondary">Banded</Badge>}
                         {s.wentToFailure && <Badge variant="destructive">Failure</Badge>}
                         {s.equipmentUsed && s.equipmentUsed !== currentGroup.exercise.equipment && (
@@ -970,15 +1126,16 @@ export function WorkoutClient({
                       </div>
                     )}
 
-                    {!s.completed && (
+                    {!s.completed && !isTimedExercise(exerciseMap.get(s.exerciseId)?.name ?? "") && (
                       <>
                         <p className="text-xs text-foreground-muted mt-2">
                           Target: {s.prescribedWeight}kg x {s.prescribedReps} reps
                         </p>
                         <div className="flex flex-wrap gap-2 mt-2">
-                          {/* Equipment variant — show for exercises that can use barbell or dumbbell */}
-                          {(currentGroup.exercise.equipment === "barbell" ||
-                            currentGroup.exercise.equipment === "dumbbell") && (
+                          {/* Equipment variant — show for barbell, dumbbell, or cable exercises */}
+                          {["barbell", "dumbbell", "cable"].includes(
+                            currentGroup.exercise.equipment,
+                          ) && (
                             <div className="flex rounded-lg overflow-hidden border border-border text-xs">
                               <button
                                 type="button"
@@ -1003,6 +1160,18 @@ export function WorkoutClient({
                                 onClick={() => setEquipment(s.id, "dumbbell")}
                               >
                                 Dumbbell
+                              </button>
+                              <button
+                                type="button"
+                                className={cn(
+                                  "px-2.5 py-1 cursor-pointer transition-colors",
+                                  s.equipmentUsed === "cable"
+                                    ? "bg-accent text-white"
+                                    : "text-foreground-muted hover:text-foreground"
+                                )}
+                                onClick={() => setEquipment(s.id, "cable")}
+                              >
+                                Cable
                               </button>
                             </div>
                           )}
@@ -1065,8 +1234,8 @@ export function WorkoutClient({
               </div>
             )}
 
-            {/* Difficulty rating */}
-            {currentExerciseDone && !currentExerciseDifficultySet && (
+            {/* Difficulty rating — skip for timed exercises */}
+            {currentExerciseDone && !currentExerciseDifficultySet && !currentIsTimed && (
               <Card className="border-accent/50">
                 <CardContent className="p-4 space-y-3">
                   <p className="text-sm font-medium text-center">
@@ -1109,6 +1278,13 @@ export function WorkoutClient({
               </Card>
             )}
 
+            {/* Exercise notes */}
+            {currentGroup.templateExercise.notes && !currentIsTimed && (
+              <p className="text-xs text-foreground-muted italic text-center">
+                {currentGroup.templateExercise.notes}
+              </p>
+            )}
+
             {/* Next exercise preview */}
             {nextGroup && (
               <div className="text-xs text-foreground-muted text-center pt-1">
@@ -1116,9 +1292,9 @@ export function WorkoutClient({
                 <span className="font-medium text-foreground">
                   {nextGroup.exercise.name}
                 </span>{" "}
-                — {nextGroup.templateExercise.sets} sets x{" "}
-                {nextGroup.templateExercise.min_reps}-
-                {nextGroup.templateExercise.max_reps} reps
+                {isTimedExercise(nextGroup.exercise.name)
+                  ? `— ${nextGroup.templateExercise.sets} x ${nextGroup.templateExercise.min_reps}s`
+                  : `— ${nextGroup.templateExercise.sets} sets x ${nextGroup.templateExercise.min_reps}-${nextGroup.templateExercise.max_reps} reps`}
               </div>
             )}
 
@@ -1145,7 +1321,7 @@ export function WorkoutClient({
             )}
 
             {/* Next exercise / Finish button */}
-            {currentExerciseDone && currentExerciseDifficultySet && (
+            {currentExerciseDone && effectiveDifficultySet && (
               <div className="pt-2 space-y-2">
                 {!isLastExercise && (
                   <Button
@@ -1169,7 +1345,7 @@ export function WorkoutClient({
                 )}
                 {isLastExercise && hasSkippedExercises && (
                   <p className="text-xs text-foreground-muted text-center">
-                    Complete skipped exercises above to finish workout
+                    Complete or skip remaining exercises to finish
                   </p>
                 )}
               </div>
