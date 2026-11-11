@@ -316,7 +316,7 @@ export function WorkoutClient({
   const progressPercent = totalSets > 0 ? (completedSets / totalSets) * 100 : 0;
 
   const currentExerciseDone =
-    currentGroup?.sets.every((s) => s.completed) ?? false;
+    currentGroup?.sets.every((s) => s.completed) || fullySkippedIndices.has(currentExerciseIndex) || false;
   const currentExerciseDifficultySet =
     currentGroup?.sets[0]?.difficulty !== null &&
     currentGroup?.sets[0]?.difficulty !== undefined;
@@ -857,7 +857,6 @@ export function WorkoutClient({
   }
 
   // ---- ACTIVE PHASE ----
-  // Check if this is the last exercise that needs action
   const remainingIndices = exerciseGroups
     .map((_, i) => i)
     .filter(
@@ -869,11 +868,18 @@ export function WorkoutClient({
     );
   const isLastExercise = remainingIndices.length === 0;
   const hasSkippedExercises = skippedIndices.size > 0;
+  const hasLaterUnresolvedExercise = exerciseGroups.some(
+    (g, i) =>
+      i > currentExerciseIndex &&
+      !fullySkippedIndices.has(i) &&
+      (!g.sets.every((s) => s.completed) || skippedIndices.has(i)),
+  );
   const currentIsTimed = currentGroup
     ? isTimedExercise(currentGroup.exercise.name)
     : false;
-  // For timed exercises, auto-skip difficulty — treat as always set
-  const effectiveDifficultySet = currentIsTimed || currentExerciseDifficultySet;
+  const currentExerciseFullySkipped = fullySkippedIndices.has(currentExerciseIndex);
+  const effectiveDifficultySet =
+    currentIsTimed || currentExerciseDifficultySet || currentExerciseFullySkipped;
 
   return (
     <div className="flex flex-col min-h-[calc(100dvh-8rem)]">
@@ -900,7 +906,7 @@ export function WorkoutClient({
               <div>
                 <div className="flex items-center gap-2">
                   <button
-                    className="text-xl font-bold text-left underline decoration-dotted underline-offset-4 decoration-foreground-muted/40 flex items-center gap-1.5 cursor-pointer hover:text-accent transition-colors"
+                    className="text-xl font-bold text-left underline decoration-dotted underline-offset-4 decoration-foreground-muted/40 flex items-center gap-1.5 cursor-pointer hover:text-accent"
                     onClick={() => {
                       setHistoryExerciseId(currentGroup.exercise.id);
                       setHistoryExerciseName(currentGroup.exercise.name);
@@ -913,7 +919,7 @@ export function WorkoutClient({
                     <>
                       <span className="text-foreground-muted text-lg">+</span>
                       <button
-                        className="text-xl font-bold text-left underline decoration-dotted underline-offset-4 decoration-foreground-muted/40 flex items-center gap-1.5 cursor-pointer hover:text-accent transition-colors"
+                        className="text-xl font-bold text-left underline decoration-dotted underline-offset-4 decoration-foreground-muted/40 flex items-center gap-1.5 cursor-pointer hover:text-accent"
                         onClick={() => {
                           setHistoryExerciseId(currentGroup.supersetPartner!.exercise.id);
                           setHistoryExerciseName(currentGroup.supersetPartner!.exercise.name);
@@ -942,17 +948,16 @@ export function WorkoutClient({
                 </div>
               </div>
               {!currentExerciseDone && (() => {
-                // Show "Don't Complete" if we've returned to this exercise
-                // (i.e., there are completed exercises after this one)
                 const isReturnedTo = exerciseGroups.some(
                   (g, i) =>
                     i > currentExerciseIndex &&
                     !fullySkippedIndices.has(i) &&
                     g.sets.every((s) => s.completed),
                 );
+                const shouldShowFullSkip = isReturnedTo || !hasLaterUnresolvedExercise;
                 return (
                   <div className="flex gap-1">
-                    {isReturnedTo && (
+                    {shouldShowFullSkip && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -962,14 +967,16 @@ export function WorkoutClient({
                         Don&apos;t Complete
                       </Button>
                     )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={skipExercise}
-                      className="text-foreground-muted"
-                    >
-                      Skip
-                    </Button>
+                    {hasLaterUnresolvedExercise && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={skipExercise}
+                        className="text-foreground-muted"
+                      >
+                        Skip
+                      </Button>
+                    )}
                   </div>
                 );
               })()}
